@@ -371,15 +371,19 @@ const FMT_EUROS = '#,##0.00"€"';
 const FMT_DATE = "dd/mm/yyyy";
 const CENTER = { horizontal: "center", vertical: "middle" };
 
-// -- Regroupement visuel des colonnes en 3 grandes zones (+ une 4e pour les
-// colonnes sans équivalent standard), avec un dégradé pastel et une bordure
-// verticale à chaque changement de zone pour repérer d'un coup d'œil où
-// commencent les infos contrat, les variables de paie, puis les totaux.
+// -- Regroupement visuel des colonnes en 4 zones, avec un dégradé pastel et
+// une bordure verticale à chaque changement de zone : infos contrat, puis
+// variables de paie (y compris "Jour(s) travaillés" et les colonnes sans
+// équivalent standard type Cachet/Déf./Indem.), puis les colonnes "de
+// travail" liées à la Garantie Minimale, et enfin — tout à la fin du
+// tableau — les totaux bruts (Coût employeur, Salaire brut, Salaire net
+// imposable, Salaire net). L'ORDRE des colonnes suit ce même regroupement
+// (cf. buildColumnLayout), pas seulement leur couleur.
 const IDENTITY_LABELS = new Set([
   "Code bulletin (itsi)", "Statut (itsi)", "Code contrat (itsi)",
   "Code salarié projet", "Matricule salarié production (itsi)", "Nom",
   "Prénom", "Abattement", "Métier", "Date de début", "Date de fin",
-  "Taux horaire", "Jour(s) travaillés",
+  "Taux horaire",
 ]);
 const GROSS_TOTAL_LABELS = new Set([
   "Coût employeur (en h)", "Coût employeur (en €)",
@@ -387,26 +391,38 @@ const GROSS_TOTAL_LABELS = new Set([
   "Salaire net imposable (en h)", "Salaire net imposable (en €)",
   "Salaire net (en h)", "Salaire net (en €)",
 ]);
+// Anciennes colonnes de travail "Garantie Minimale" du fichier source
+// (Total base, MG, Ratio MG, Supp ap. MG, Total somme) : reconnues par
+// motif car elles n'ont pas de libellé cible standard (ce sont toujours
+// des colonnes "extra").
+const MG_LABEL_PATTERNS = [
+  /^total base\b/, /^mg\b/, /^ratio mg\b/, /^supp .*ap\.? mg/, /^total somme\b/,
+];
 
 const SECTION_HEADER_FILL = {
   contrat: { type: "pattern", pattern: "solid", fgColor: { argb: "FFD3E5F7" } }, // bleu pastel
   paie: { type: "pattern", pattern: "solid", fgColor: { argb: "FFD6F0DB" } }, // vert pastel
+  mg: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF7D3E6" } }, // rose pastel
   totaux: { type: "pattern", pattern: "solid", fgColor: { argb: "FFE6D9F7" } }, // violet pastel
-  autres: { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8E8E8" } }, // gris pastel
 };
 const SECTION_DATA_FILL = {
   contrat: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF3F8FD" } },
   paie: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF2FAF4" } },
+  mg: { type: "pattern", pattern: "solid", fgColor: { argb: "FFFCEEF5" } },
   totaux: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF6F1FC" } },
-  autres: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF6F6F6" } },
 };
 const SECTION_BORDER = { style: "medium", color: { argb: "FFB0B0B0" } };
 const HEADER_BOTTOM_BORDER = { style: "thin", color: { argb: "FF999999" } };
 
-function sectionForLabel(label, isExtra) {
-  if (isExtra) return "autres";
+function isMgLabel(label) {
+  const norm = normalizeLabel(label);
+  return MG_LABEL_PATTERNS.some((re) => re.test(norm));
+}
+
+function sectionForLabel(label) {
   if (IDENTITY_LABELS.has(label)) return "contrat";
   if (GROSS_TOTAL_LABELS.has(label)) return "totaux";
+  if (isMgLabel(label)) return "mg";
   return "paie";
 }
 
@@ -465,23 +481,45 @@ export async function buildOutput(headers, sourceRows, options) {
   // exactement le fichier déposé, ni plus ni moins.
   const { letterToTargetLabel, extraEntries } = resolveColumnMapping(headers);
   const usedTargetLabels = new Set(Object.values(letterToTargetLabel));
+  const labelToSrcCol = {};
+  for (const [srcCol, label] of Object.entries(letterToTargetLabel)) {
+    labelToSrcCol[label] = srcCol;
+  }
   const activeStandardLabels = STANDARD_HEADERS.filter((l) => usedTargetLabels.has(l));
-  const activeLabelToIndex = new Map(activeStandardLabels.map((l, i) => [l, i + 1]));
-  const nStd = activeStandardLabels.length;
-  const nExtra = extraEntries.length;
-  const nTotalCols = nStd + nExtra;
+  const activePayLabels = activeStandardLabels.filter((l) => !GROSS_TOTAL_LABELS.has(l));
+  const activeTotalLabels = activeStandardLabels.filter((l) => GROSS_TOTAL_LABELS.has(l));
+  const extrasNonMg = extraEntries.filter(([, label]) => !isMgLabel(label));
+  const extrasMg = extraEntries.filter(([, label]) => isMgLabel(label));
 
-  // Zone visuelle (contrat / paie / totaux / autres) de chaque colonne, et
-  // lettre des colonnes marquant la fin d'une zone (pour la bordure de
-  // séparation). Purement dérivé de l'ordre des colonnes réellement
-  // présentes : aucune zone vide ne peut apparaître.
+  // Ordre final des colonnes : infos contrat + variables de paie standard
+  // (dans l'ordre du format cible, "Jour(s) travaillés" y compris), puis
+  // les colonnes sans équivalent standard (Cachet, Déf., Indem.…), puis les
+  // anciennes colonnes de travail Garantie Minimale, et enfin — tout à la
+  // fin du tableau — les totaux bruts (Coût employeur, Salaire brut,
+  // Salaire net imposable, Salaire net).
+  const columnPlan = [
+    ...activePayLabels.map((label) => ({ label, srcCol: labelToSrcCol[label] })),
+    ...extrasNonMg.map(([srcCol, label]) => ({ label, srcCol })),
+    ...extrasMg.map(([srcCol, label]) => ({ label, srcCol })),
+    ...activeTotalLabels.map((label) => ({ label, srcCol: labelToSrcCol[label] })),
+  ];
+  const nTotalCols = columnPlan.length;
+
+  // colonne cible (lettre) + libellé pour chaque colonne source reprise,
+  // indexé par lettre SOURCE (propre à ce fichier), et zone visuelle de
+  // chaque colonne cible (purement dérivée de columnPlan : aucune zone
+  // vide ne peut apparaître).
+  const targetLetterOf = {};
+  const targetLabelOf = {};
   const sectionOfIndex = [];
-  for (let i = 1; i <= nStd; i++) {
-    sectionOfIndex[i] = sectionForLabel(activeStandardLabels[i - 1], false);
-  }
-  for (let i = nStd + 1; i <= nTotalCols; i++) {
-    sectionOfIndex[i] = sectionForLabel(extraEntries[i - nStd - 1][1], true);
-  }
+  columnPlan.forEach(({ label, srcCol }, i) => {
+    const idx = i + 1;
+    targetLetterOf[srcCol] = colLetterFromIndex(idx);
+    targetLabelOf[srcCol] = label;
+    sectionOfIndex[idx] = sectionForLabel(label);
+  });
+  const fullColmap = { ...targetLetterOf };
+
   const sectionBoundaryCols = [];
   for (let i = 1; i < nTotalCols; i++) {
     if (sectionOfIndex[i] !== sectionOfIndex[i + 1]) sectionBoundaryCols.push(i);
@@ -491,20 +529,12 @@ export async function buildOutput(headers, sourceRows, options) {
     sectionOfLetter[colLetterFromIndex(i)] = sectionOfIndex[i];
   }
 
-  // colonne cible (lettre) + libellé pour chaque colonne source reprise,
-  // indexé par lettre SOURCE (propre à ce fichier)
-  const targetLetterOf = {};
-  const targetLabelOf = {};
-  for (const [srcCol, targetLabel] of Object.entries(letterToTargetLabel)) {
-    targetLetterOf[srcCol] = colLetterFromIndex(activeLabelToIndex.get(targetLabel));
-    targetLabelOf[srcCol] = targetLabel;
-  }
-  extraEntries.forEach(([srcCol, label], i) => {
-    const letter = colLetterFromIndex(nStd + 1 + i);
-    targetLetterOf[srcCol] = letter;
-    targetLabelOf[srcCol] = label;
-  });
-  const fullColmap = { ...targetLetterOf };
+  // Colonnes "(en €)" de la zone paie (variables de paie standard + extras
+  // hors Garantie Minimale) : utilisées pour calculer "Salaire brut" par
+  // formule plutôt que de recopier la valeur figée du fichier source.
+  const brutSumCols = columnPlan
+    .filter(({ label }) => sectionForLabel(label) === "paie" && labelIsEuros(label))
+    .map(({ srcCol }) => targetLetterOf[srcCol]);
 
   // lettre source qui alimente un libellé cible donné (pour Métier, dates…)
   const srcLetterForTargetLabel = (targetLabel) =>
@@ -544,16 +574,8 @@ export async function buildOutput(headers, sourceRows, options) {
 
   // -- ligne d'entête des colonnes (ligne 4) --------------------------
   const headerRow = 4;
-  activeStandardLabels.forEach((label, i) => {
-    const cell = ws.getCell(headerRow, i + 1);
-    cell.value = label;
-    cell.font = FONT_LABEL_BOLD;
-    cell.alignment = CENTER;
-    cell.fill = SECTION_HEADER_FILL[sectionOfIndex[i + 1]];
-    cell.border = { bottom: HEADER_BOTTOM_BORDER };
-  });
-  extraEntries.forEach(([, label], i) => {
-    const idx = nStd + 1 + i;
+  columnPlan.forEach(({ label }, i) => {
+    const idx = i + 1;
     const cell = ws.getCell(headerRow, idx);
     cell.value = label;
     cell.font = FONT_LABEL_BOLD;
@@ -626,9 +648,21 @@ export async function buildOutput(headers, sourceRows, options) {
           const label = targetLabelOf[srcCol];
           const tgtIdx = colIndexFromLetter(tgtCol);
           const outCell = ws.getCell(targetRow, tgtIdx);
-          writeValue(outCell, val, label, srcCol, tgtCol, srcRow, targetRow, fullColmap, frozenStats);
+          if (label === "Salaire brut (en €)" && brutSumCols.length) {
+            // Calculé (somme des colonnes "paie" en €), pas recopié
+            // depuis la valeur figée du fichier source : la formule reste
+            // vivante si l'utilisateur modifie des heures.
+            outCell.value = {
+              formula: `SUM(${brutSumCols.map((c) => `${c}${targetRow}`).join(",")})`,
+            };
+            outCell.numFmt = FMT_EUROS;
+          } else {
+            writeValue(outCell, val, label, srcCol, tgtCol, srcRow, targetRow, fullColmap, frozenStats);
+          }
           outCell.fill = SECTION_DATA_FILL[sectionOfLetter[tgtCol]];
-          const hasVal = val !== null && val !== undefined && val !== "";
+          const hasVal =
+            (label === "Salaire brut (en €)" && brutSumCols.length) ||
+            (val !== null && val !== undefined && val !== "");
           if (label.endsWith("(en €)") && hasVal) colsWithAmounts.add(tgtCol);
         }
         currentRow += 1;

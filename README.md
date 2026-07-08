@@ -80,20 +80,26 @@ cette ligne n'existant plus dans le nouveau format : sa dernière valeur
 calculée est alors figée à la place, et un message le signale dans
 l'interface.
 
-## Mise en forme des colonnes
+## Mise en forme et ordre des colonnes
 
-Les colonnes sont regroupées visuellement en zones pastel, séparées par une
-bordure verticale (`sectionForLabel()` dans `src/generator.js`) :
+Les colonnes sont regroupées en 4 zones pastel, séparées par une bordure
+verticale (`sectionForLabel()` / `columnPlan` dans `src/generator.js`) —
+l'ordre des colonnes suit ce même regroupement, pas seulement leur couleur :
 
-- **Informations contrat** (bleu) : Code bulletin, Statut, Code contrat,
-  Nom, Prénom, Métier, dates, taux horaire…
-- **Variables de paie** (vert) : toutes les colonnes heures/euros
-  (H. normales, majorations, indemnités…), ainsi que les colonnes sans
-  équivalent standard éventuelles.
-- **Totaux** (violet) : Coût employeur, Salaire brut, Salaire net
-  imposable, Salaire net.
-- **Autres** (gris) : colonnes du fichier source sans équivalent dans le
-  format standard (cf. section précédente), placées en fin de tableau.
+1. **Informations contrat** (bleu) : Code bulletin, Statut, Code contrat,
+   Nom, Prénom, Métier, dates, taux horaire…
+2. **Variables de paie** (vert) : Jour(s) travaillés, toutes les colonnes
+   heures/euros (H. normales, majorations, indemnités…), ainsi que les
+   colonnes sans équivalent standard type Cachet/Déf./Indem.
+3. **Garantie Minimale** (rose) : les anciennes colonnes de travail Total
+   base/MG/Ratio MG/Supp ap. MG/Total somme, juste avant les totaux.
+4. **Totaux bruts** (violet), **toujours en toutes dernières colonnes** :
+   Coût employeur, Salaire brut, Salaire net imposable, Salaire net.
+
+`Salaire brut (en €)` est **calculée** (formule SOMME de toutes les
+colonnes euros de la zone "variables de paie" de la ligne), et non recopiée
+depuis le fichier source : modifier un nombre d'heures recalcule aussi le
+salaire brut, comme le reste de l'outil.
 
 Les 4 premières lignes (bandeau + en-têtes) sont figées pour rester visibles
 au défilement.
