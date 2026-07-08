@@ -34,18 +34,30 @@ déjà fait, activer une fois GitHub Pages sur le repo :
 
 ## Logique de conversion
 
-Le mapping des colonnes source → colonnes cible et le classement des
-métiers par département sont définis dans `src/generator.js`
-(`METIER_TO_DEPT`, `IDENTITY_MAP`, `CALC_MAP`, `EXTRA_COLS`) — à adapter si
-de nouveaux intitulés de poste ou de nouvelles colonnes apparaissent dans
-les fichiers source.
+Le mapping des colonnes source → colonnes cible se fait par **nom de
+colonne** (le libellé de la ligne d'en-tête du fichier déposé), jamais par
+position : si l'ordre des colonnes change d'un export à l'autre, ou si des
+colonnes sont ajoutées/absentes selon la production, la génération reste
+correcte tant que l'intitulé de colonne ne change pas. La résolution du
+mapping se fait dans `resolveColumnMapping()` (`src/generator.js`) :
 
-Quelques colonnes du fichier source n'ont pas d'équivalent dans le format
-cible :
-
+- Toute colonne source dont le libellé (normalisé : minuscule, accents et
+  unités "(h)"/"(€)" harmonisés) correspond à un libellé du format cible
+  (`STANDARD_HEADERS`) est placée à la position standard correspondante,
+  quelle que soit sa position dans le fichier source.
+- Quelques champs "identité" portent un nom différent entre les deux
+  formats (`IDENTITY_RENAME` : Code bulletin, Statut, Code contrat, Code
+  employé, Matricule).
 - Les colonnes de travail internes (Total base, MG, Ratio MG, Supp ap. MG,
-  Total somme) servaient uniquement à répartir la Garantie Minimale entre
-  deux bulletins d'un même salarié ; elles ne sont pas reprises.
-- Les colonnes Déf. soumis/non soumis, Rep. continue, Indem. Matériel et
-  Indem. MàL n'ont pas de colonne dédiée dans le format cible : elles sont
-  ajoutées en fin de tableau pour ne perdre aucune donnée.
+  Total somme — qui servaient à répartir la Garantie Minimale entre deux
+  bulletins d'un même salarié) sont détectées par motif (`DROPPED_PATTERNS`)
+  et non reprises.
+- Toute colonne source restante, sans équivalent dans le format cible (ex.
+  Cachet grp./iso., Indem. Matériel, Indem. VHSS…), est ajoutée
+  automatiquement en fin de tableau pour ne perdre aucune donnée — la liste
+  de ces colonnes "extra" varie donc d'un fichier à l'autre.
+
+Le classement des métiers par département (`METIER_TO_DEPT`) reste, lui,
+une liste explicite à compléter si de nouveaux intitulés de poste
+apparaissent ; un métier non reconnu est classé dans "AUTRES" et signalé à
+l'utilisateur dans l'interface plutôt que de faire échouer la génération.

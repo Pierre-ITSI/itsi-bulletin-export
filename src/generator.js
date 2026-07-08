@@ -9,70 +9,41 @@ import ExcelJS from "exceljs";
 import * as XLSX from "xlsx";
 
 // --------------------------------------------------------------------------
-// 1. Correspondance des colonnes source -> colonnes cible
+// 1. Correspondance des colonnes source -> colonnes cible, PAR NOM D'EN-TÊTE
 // --------------------------------------------------------------------------
+//
+// Les fichiers "Combine" n'ont pas toujours les colonnes dans le même ordre
+// ni le même jeu de colonnes (une production qui utilise des "cachets" ou
+// des indemnités spécifiques ajoute/retire des colonnes). Le mapping se fait
+// donc entièrement sur le LIBELLÉ de la ligne d'en-tête du fichier déposé,
+// jamais sur la position (lettre de colonne) : si l'ordre change, tout
+// continue à fonctionner tant que l'intitulé de colonne reste le même.
 
-// Colonnes "identité" (pas de calcul)
-const IDENTITY_MAP = {
-  A: "A", // Code bulletin
-  B: "B", // Statut
-  G: "C", // Code contrat
-  E: "D", // Code employé -> Code salarié projet
-  H: "E", // Matricule
-  C: "F", // Nom
-  D: "G", // Prénom
-  F: "H", // Abattement
-  I: "I", // Métier
-  J: "J", // Date de début
-  K: "K", // Date de fin
-  L: "L", // Taux horaire
-  M: "M", // Jour(s) travaillés
+// Quelques champs "identité" portent un nom différent entre le fichier
+// source et le format cible ; tous les autres (Nom, Prénom, Métier, Date de
+// début, Date de fin, Taux horaire, Jour(s) travaillés, Abattement, et
+// toutes les paires heures/euros) sont retrouvés par correspondance directe
+// de libellé (voir normalizeLabel) sans avoir besoin d'être listés ici.
+const IDENTITY_RENAME = {
+  "code bulletin": "Code bulletin (itsi)",
+  statut: "Statut (itsi)",
+  "code contrat": "Code contrat (itsi)",
+  "code employe": "Code salarié projet",
+  matricule: "Matricule salarié production (itsi)",
 };
 
-// Colonnes de calcul (paires heures/euros) qui existent dans les deux formats
-const CALC_MAP = {
-  N: "N", O: "O", // H. normales
-  P: "P", Q: "Q", // H. supp. 125%
-  R: "R", S: "S", // H. supp. 150%
-  T: "T", U: "U", // H. supp. 175%
-  V: "X", W: "Y", // Majo. jour 25%
-  X: "Z", Y: "AA", // Majo. jour 50%
-  Z: "AB", AA: "AC", // Majo. jour 100%
-  AB: "AH", AC: "AI", // Majo. nuit 50%
-  AD: "AL", AE: "AM", // H. anticipées 100%
-  AF: "BJ", AG: "BK", // Indem. transport (Tournage)
-  AH: "BP", AI: "BQ", // Indem. voyage (Tournage)
-  AJ: "BV", AK: "BW", // Indem. repas (Hors RP)
-  AL: "CF", AM: "CG", // Indem. casse croûte (Hors RP)
-  AN: "CL", AO: "CM", // Indem. continue
-  AP: "CX", AQ: "CY", // Retrait plafond majo.
-  AR: "CZ", AS: "DA", // Prime except.
-  BK: "DC", // Coût employeur (€)
-  BL: "DE", // Salaire brut (€)
-  BM: "DG", // Salaire net imposable (€)
-  BN: "DI", // Salaire net (€)
-};
-
-// Colonnes source sans équivalent dans le format cible : ajoutées en fin de
-// tableau (après DI) pour ne perdre aucune information.
-const EXTRA_COLS = [
-  ["AT", "Déf. soumis (en h)"],
-  ["AU", "Déf. soumis (en €)"],
-  ["AV", "Déf. non soumis (en h)"],
-  ["AW", "Déf. non soumis (en €)"],
-  ["AX", "Rep. continue (en h)"],
-  ["AY", "Rep. continue (en €)"],
-  ["AZ", "Indem. Matériel (S) (en h)"],
-  ["BA", "Indem. Matériel (S) (en €)"],
-  ["BB", "Indem. MàL (S) (en h)"],
-  ["BC", "Indem. MàL (S) (en €)"],
+// Colonnes "de travail" internes au fichier source, sans équivalent, non
+// reprises : elles servaient uniquement à répartir la Garantie Minimale
+// entre les bulletins d'un même salarié (Total base, MG, Ratio MG,
+// Supp ap. MG, Total somme), une notion qui n'existe pas dans le format
+// cible.
+const DROPPED_PATTERNS = [
+  /^total base\b/,
+  /^mg\b/,
+  /^ratio mg\b/,
+  /^supp .*ap\.? mg/,
+  /^total somme\b/,
 ];
-
-// Colonnes "de travail" du fichier source, sans équivalent, non reprises
-// (Total base, MG, Ratio MG, Supp ap. MG x3, Total somme) : elles servaient
-// uniquement à répartir la Garantie Minimale entre les bulletins d'un même
-// salarié, une notion qui n'existe pas dans le format cible.
-// (BD, BE, BF, BG, BH, BI, BJ dans le fichier source)
 
 const STANDARD_HEADERS = [
   "Code bulletin (itsi)", "Statut (itsi)", "Code contrat (itsi)",
@@ -132,6 +103,65 @@ const STANDARD_HEADERS = [
 
 const COL_WIDTHS = { A: 18, B: 7.88, C: 16.38, D: 11.0, E: 9.63, H: 12.38, I: 25.38 };
 
+// Normalise un libellé de colonne pour comparaison : minuscule, accents
+// retirés, espaces réduits, et "(h)"/"(€)" unifiés avec leurs variantes
+// "(en h)"/"(en €)" utilisées dans le format cible.
+function normalizeLabel(s) {
+  if (!s) return "";
+  let x = String(s).trim().toLowerCase();
+  x = x.replace(/\(en\s*€\)/g, "(unit_eur)").replace(/\(€\)/g, "(unit_eur)");
+  x = x.replace(/\(en\s*h\)/g, "(unit_h)").replace(/\(h\)/g, "(unit_h)");
+  x = stripAccents(x);
+  x = x.replace(/\s+/g, " ").trim();
+  return x;
+}
+
+const TARGET_NORM_TO_LABEL = new Map(STANDARD_HEADERS.map((l) => [normalizeLabel(l), l]));
+const TARGET_LABEL_TO_INDEX = new Map(STANDARD_HEADERS.map((l, i) => [l, i + 1]));
+
+function isDroppedLabel(normLabel) {
+  return DROPPED_PATTERNS.some((re) => re.test(normLabel));
+}
+
+// Pour les colonnes "extra" (sans équivalent standard), on garde le libellé
+// d'origine mais on harmonise le suffixe "(h)"/"(€)" en "(en h)"/"(en €)"
+// comme dans le reste du format cible, pour que le format des nombres et la
+// lisibilité restent cohérents.
+function toDisplayLabel(label) {
+  return label.replace(/\(h\)\s*$/i, "(en h)").replace(/\(€\)\s*$/i, "(en €)");
+}
+
+// Résout, pour LE FICHIER DÉPOSÉ (ses propres lettres de colonnes, quel que
+// soit leur ordre), quelle colonne cible standard chaque colonne source
+// alimente, et quelles colonnes n'ont aucun équivalent standard (à ajouter
+// en fin de tableau pour ne perdre aucune donnée).
+function resolveColumnMapping(headers) {
+  const letterToTargetLabel = {};
+  const extraEntries = []; // [srcLetter, originalLabel] dans l'ordre du fichier source
+  const letters = Object.keys(headers).sort(
+    (a, b) => colIndexFromLetter(a) - colIndexFromLetter(b)
+  );
+
+  for (const letter of letters) {
+    const rawLabel = headers[letter];
+    if (!rawLabel) continue;
+    const label = String(rawLabel).trim();
+    const norm = normalizeLabel(label);
+    if (!norm) continue;
+    if (isDroppedLabel(norm)) continue;
+
+    const renamedLabel = IDENTITY_RENAME[norm] || label;
+    const renamedNorm = normalizeLabel(renamedLabel);
+    if (TARGET_NORM_TO_LABEL.has(renamedNorm)) {
+      letterToTargetLabel[letter] = TARGET_NORM_TO_LABEL.get(renamedNorm);
+    } else {
+      extraEntries.push([letter, toDisplayLabel(label)]);
+    }
+  }
+
+  return { letterToTargetLabel, extraEntries };
+}
+
 // --------------------------------------------------------------------------
 // 2. Classement des métiers par département de tournage
 // --------------------------------------------------------------------------
@@ -140,11 +170,14 @@ const METIER_TO_DEPT = {
   "directeur de production cinema": "PRODUCTION",
   "administrateur de production cinema": "PRODUCTION",
   "administrateur adjoint comptable cinema": "PRODUCTION",
+  "assistant comptable de production cinema": "PRODUCTION",
   "secretaire de production cinema": "PRODUCTION",
   "assistant de production adjoint": "PRODUCTION",
+  "responsable des enfants cinema": "PRODUCTION",
 
   "regisseur general cinema": "REGIE",
   "regisseur adjoint cinema": "REGIE",
+  "regisseur d'exterieur cinema": "REGIE",
   "auxiliaire a la regie cinema": "REGIE",
 
   "premier assistant realisateur cinema": "REALISATION",
@@ -153,13 +186,17 @@ const METIER_TO_DEPT = {
   "scripte cinema": "REALISATION",
   "assistant scripte cinema": "REALISATION",
   "assistant au charge de la figuration cinema": "REALISATION",
+  "charge de la figuration cinema": "REALISATION",
+  "choregraphe": "REALISATION",
 
   "directeur de la photographie cinema": "IMAGE",
+  "cadreur cinema": "IMAGE",
   "premier assistant operateur cinema": "IMAGE",
   "deuxieme assistant operateur cinema": "IMAGE",
   "technicien retour image cinema": "IMAGE",
 
   "chef machiniste prise de vues cinema": "MACHINERIE",
+  "sous-chef machiniste de prise de vues cinema": "MACHINERIE",
   "machiniste de prise de vues cinema": "MACHINERIE",
 
   "chef electricien prise de vues cinema": "ELECTRICITE",
@@ -168,26 +205,39 @@ const METIER_TO_DEPT = {
 
   "chef operateur de son cinema": "SON",
   "1er assistant operateur du son cinema": "SON",
+  "2eme assistant operateur du son cinema": "SON",
 
+  "chef decorateur cinema": "DECORATION",
   "troisieme assistant decorateur cinema": "DECORATION",
+  "ensemblier cinema": "DECORATION",
   "accessoiriste de plateau cinema": "DECORATION",
+  "chef peintre de decor cinema": "DECORATION",
+  "peintre faux bois et patine decor cinema": "DECORATION",
+  "menuisier traceur de decor cinema": "DECORATION",
+  "machiniste de construction cinema": "DECORATION",
+  "infographiste de decor cinema": "DECORATION",
 
   "chef costumier cinema": "COSTUMES",
   "1er assistant costume cinema": "COSTUMES",
   "costumier cinema": "COSTUMES",
   "habilleur cinema": "COSTUMES",
+  "auxiliaire a la regie cinema (affecte costumes)": "COSTUMES",
 
   "chef maquilleur cinema": "MAQUILLAGE",
   "maquilleur cinema": "MAQUILLAGE",
 
   "chef coiffeur cinema": "COIFFURE",
   "coiffeur cinema": "COIFFURE",
+
+  "coordinateur de post-production cinema": "MONTAGE",
+  "chef monteur cinema": "MONTAGE",
+  "1er assistant monteur cinema": "MONTAGE",
 };
 
 const DEPARTMENT_ORDER = [
   "REGIE", "PRODUCTION", "REALISATION", "IMAGE", "MACHINERIE",
   "ELECTRICITE", "SON", "DECORATION", "COSTUMES", "MAQUILLAGE",
-  "COIFFURE", "AUTRES",
+  "COIFFURE", "MONTAGE", "AUTRES",
 ];
 
 function stripAccents(s) {
@@ -283,12 +333,24 @@ export async function readSource(arrayBuffer) {
   const ws = wb.Sheets[wb.SheetNames[0]];
   const range = XLSX.utils.decode_range(ws["!ref"]);
 
+  const headers = {};
+  let codeBulletinCol = range.s.c; // repli sur la 1ère colonne si l'en-tête n'est pas retrouvé par nom
+  for (let c = range.s.c; c <= range.e.c; c++) {
+    const letter = colLetterFromIndex(c + 1);
+    const cell = ws[XLSX.utils.encode_cell({ r: range.s.r, c })];
+    if (cell && cell.v !== undefined && cell.v !== null && String(cell.v).trim() !== "") {
+      const label = String(cell.v).trim();
+      headers[letter] = label;
+      if (normalizeLabel(label) === "code bulletin") codeBulletinCol = c;
+    }
+  }
+
   const rows = [];
   for (let r = range.s.r + 1; r <= range.e.r; r++) {
-    // r=0 est la ligne d'en-tête ; rowNumber reste 1-indexé pour rester
-    // cohérent avec les coordonnées Excel utilisées ailleurs.
+    // r = ligne d'en-tête ; rowNumber reste 1-indexé pour rester cohérent
+    // avec les coordonnées Excel utilisées ailleurs.
     const rowNumber = r + 1;
-    const aCell = ws[XLSX.utils.encode_cell({ r, c: 0 })];
+    const aCell = ws[XLSX.utils.encode_cell({ r, c: codeBulletinCol })];
     const codeBulletin = aCell ? aCell.v : undefined;
     if (codeBulletin === undefined || codeBulletin === null || codeBulletin === "") continue;
     if (String(codeBulletin).trim().toUpperCase() === "TOTAL") continue;
@@ -300,7 +362,7 @@ export async function readSource(arrayBuffer) {
     }
     rows.push({ srcRow: rowNumber, data });
   }
-  return rows;
+  return { headers, rows };
 }
 
 // --------------------------------------------------------------------------
@@ -323,13 +385,13 @@ function labelIsEuros(label) {
 }
 
 function writeValue(cell, val, label, srcCol, tgtCol, srcRow, targetRow, colmap, warnings) {
-  if (srcCol === "J" || srcCol === "K") {
+  if (label === "Date de début" || label === "Date de fin") {
     const d = parseDate(val);
     cell.value = d;
     if (d instanceof Date) cell.numFmt = FMT_DATE;
     return;
   }
-  if (srcCol === "M") {
+  if (label === "Jour(s) travaillés") {
     cell.value = countJours(val);
     return;
   }
@@ -352,29 +414,41 @@ function writeValue(cell, val, label, srcCol, tgtCol, srcRow, targetRow, colmap,
   else if (labelIsEuros(label)) cell.numFmt = FMT_EUROS;
 }
 
-export async function buildOutput(sourceRows, options) {
+export async function buildOutput(headers, sourceRows, options) {
   const { societe, production, objet, idcc } = options;
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("EXPORT BULLETIN", { views: [{ showGridLines: true }] });
 
   const nStd = STANDARD_HEADERS.length; // colonnes A..DI
-  const nExtra = EXTRA_COLS.length;
+
+  // Résolution du mapping colonnes source -> cible d'après les libellés
+  // d'en-tête RÉELS du fichier déposé (peu importe leur position).
+  const { letterToTargetLabel, extraEntries } = resolveColumnMapping(headers);
+  const nExtra = extraEntries.length;
   const nTotalCols = nStd + nExtra;
 
-  // colonne cible (lettre) + libellé pour chaque colonne source reprise
+  // colonne cible (lettre) + libellé pour chaque colonne source reprise,
+  // indexé par lettre SOURCE (propre à ce fichier)
   const targetLetterOf = {};
   const targetLabelOf = {};
-  for (const [srcCol, tgtCol] of Object.entries({ ...IDENTITY_MAP, ...CALC_MAP })) {
-    targetLetterOf[srcCol] = tgtCol;
-    targetLabelOf[srcCol] = STANDARD_HEADERS[colIndexFromLetter(tgtCol) - 1];
+  for (const [srcCol, targetLabel] of Object.entries(letterToTargetLabel)) {
+    targetLetterOf[srcCol] = colLetterFromIndex(TARGET_LABEL_TO_INDEX.get(targetLabel));
+    targetLabelOf[srcCol] = targetLabel;
   }
-  EXTRA_COLS.forEach(([srcCol, label], i) => {
+  extraEntries.forEach(([srcCol, label], i) => {
     const letter = colLetterFromIndex(nStd + 1 + i);
     targetLetterOf[srcCol] = letter;
     targetLabelOf[srcCol] = label;
   });
   const fullColmap = { ...targetLetterOf };
+
+  // lettre source qui alimente un libellé cible donné (pour Métier, dates…)
+  const srcLetterForTargetLabel = (targetLabel) =>
+    Object.keys(letterToTargetLabel).find((l) => letterToTargetLabel[l] === targetLabel);
+  const metierCol = srcLetterForTargetLabel("Métier");
+  const debutCol = srcLetterForTargetLabel("Date de début");
+  const finCol = srcLetterForTargetLabel("Date de fin");
 
   // -- bandeau d'en-tête (lignes 1-3) --------------------------------
   ws.getCell("F1").value = "Société"; ws.getCell("F1").font = FONT_LABEL_BOLD;
@@ -388,8 +462,12 @@ export async function buildOutput(sourceRows, options) {
   ws.getCell("H2").value = objet;
   ws.getCell("J2").value = idcc;
 
-  const debuts = sourceRows.map((r) => parseDate(r.data.J)).filter((d) => d instanceof Date);
-  const fins = sourceRows.map((r) => parseDate(r.data.K)).filter((d) => d instanceof Date);
+  const debuts = debutCol
+    ? sourceRows.map((r) => parseDate(r.data[debutCol])).filter((d) => d instanceof Date)
+    : [];
+  const fins = finCol
+    ? sourceRows.map((r) => parseDate(r.data[finCol])).filter((d) => d instanceof Date)
+    : [];
   if (debuts.length && fins.length) {
     const dmin = new Date(Math.min(...debuts));
     const dmax = new Date(Math.max(...fins));
@@ -408,7 +486,7 @@ export async function buildOutput(sourceRows, options) {
     cell.font = FONT_LABEL_BOLD;
     cell.alignment = CENTER;
   });
-  EXTRA_COLS.forEach(([, label], i) => {
+  extraEntries.forEach(([, label], i) => {
     const cell = ws.getCell(headerRow, nStd + 1 + i);
     cell.value = label;
     cell.font = FONT_LABEL_BOLD;
@@ -423,8 +501,9 @@ export async function buildOutput(sourceRows, options) {
   const byDept = {};
   const unclassified = new Set();
   for (const { srcRow, data } of sourceRows) {
-    const dept = classifyMetier(data.I);
-    if (dept === "AUTRES") unclassified.add(data.I);
+    const metier = metierCol ? data[metierCol] : undefined;
+    const dept = classifyMetier(metier);
+    if (dept === "AUTRES") unclassified.add(metier);
     if (!byDept[dept]) byDept[dept] = [];
     byDept[dept].push({ srcRow, data });
   }
@@ -505,9 +584,9 @@ export async function buildOutput(sourceRows, options) {
 }
 
 export async function generate(sourceArrayBuffer, options) {
-  const rows = await readSource(sourceArrayBuffer);
+  const { headers, rows } = await readSource(sourceArrayBuffer);
   if (rows.length === 0) {
     throw new Error("Aucune ligne de bulletin trouvée dans le fichier source.");
   }
-  return buildOutput(rows, options);
+  return buildOutput(headers, rows, options);
 }
