@@ -67,11 +67,10 @@ l'utilisateur dans l'interface plutôt que de faire échouer la génération.
 Trois niveaux de sous-total sont générés, avec des formules SOMME qui ne se
 recoupent jamais (pas de double comptage) :
 
-- **Par contrat** (`Code contrat`) : les bulletins consécutifs d'un même
-  contrat sont sommés dès qu'il y en a plusieurs sur la période ; un contrat
-  à bulletin unique n'a pas de ligne de sous-total (il n'apporterait rien).
-- **Par département** : somme des sous-totaux contrat (ou, à défaut, des
-  bulletins uniques) du département.
+- **Par contrat** (`Code contrat`) : chaque contrat (dès qu'il a un code) a
+  sa ligne de sous-total, même s'il n'a qu'un seul bulletin sur la période —
+  cela permet de repérer chaque contrat d'un coup d'œil dans le tableau.
+- **Par département** : somme des sous-totaux contrat du département.
 - **Total général** : somme des sous-totaux de département.
 
 Une colonne dont la formule référence la ligne "TOTAL" par salarié du
@@ -80,3 +79,21 @@ les bulletins d'un même salarié) ne peut pas être traduite telle quelle,
 cette ligne n'existant plus dans le nouveau format : sa dernière valeur
 calculée est alors figée à la place, et un message le signale dans
 l'interface.
+
+## Mise en forme des colonnes
+
+Les colonnes sont regroupées visuellement en zones pastel, séparées par une
+bordure verticale (`sectionForLabel()` dans `src/generator.js`) :
+
+- **Informations contrat** (bleu) : Code bulletin, Statut, Code contrat,
+  Nom, Prénom, Métier, dates, taux horaire…
+- **Variables de paie** (vert) : toutes les colonnes heures/euros
+  (H. normales, majorations, indemnités…), ainsi que les colonnes sans
+  équivalent standard éventuelles.
+- **Totaux** (violet) : Coût employeur, Salaire brut, Salaire net
+  imposable, Salaire net.
+- **Autres** (gris) : colonnes du fichier source sans équivalent dans le
+  format standard (cf. section précédente), placées en fin de tableau.
+
+Les 4 premières lignes (bandeau + en-têtes) sont figées pour rester visibles
+au défilement.

@@ -371,6 +371,45 @@ const FMT_EUROS = '#,##0.00"€"';
 const FMT_DATE = "dd/mm/yyyy";
 const CENTER = { horizontal: "center", vertical: "middle" };
 
+// -- Regroupement visuel des colonnes en 3 grandes zones (+ une 4e pour les
+// colonnes sans équivalent standard), avec un dégradé pastel et une bordure
+// verticale à chaque changement de zone pour repérer d'un coup d'œil où
+// commencent les infos contrat, les variables de paie, puis les totaux.
+const IDENTITY_LABELS = new Set([
+  "Code bulletin (itsi)", "Statut (itsi)", "Code contrat (itsi)",
+  "Code salarié projet", "Matricule salarié production (itsi)", "Nom",
+  "Prénom", "Abattement", "Métier", "Date de début", "Date de fin",
+  "Taux horaire", "Jour(s) travaillés",
+]);
+const GROSS_TOTAL_LABELS = new Set([
+  "Coût employeur (en h)", "Coût employeur (en €)",
+  "Salaire brut (en h)", "Salaire brut (en €)",
+  "Salaire net imposable (en h)", "Salaire net imposable (en €)",
+  "Salaire net (en h)", "Salaire net (en €)",
+]);
+
+const SECTION_HEADER_FILL = {
+  contrat: { type: "pattern", pattern: "solid", fgColor: { argb: "FFD3E5F7" } }, // bleu pastel
+  paie: { type: "pattern", pattern: "solid", fgColor: { argb: "FFD6F0DB" } }, // vert pastel
+  totaux: { type: "pattern", pattern: "solid", fgColor: { argb: "FFE6D9F7" } }, // violet pastel
+  autres: { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8E8E8" } }, // gris pastel
+};
+const SECTION_DATA_FILL = {
+  contrat: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF3F8FD" } },
+  paie: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF2FAF4" } },
+  totaux: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF6F1FC" } },
+  autres: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF6F6F6" } },
+};
+const SECTION_BORDER = { style: "medium", color: { argb: "FFB0B0B0" } };
+const HEADER_BOTTOM_BORDER = { style: "thin", color: { argb: "FF999999" } };
+
+function sectionForLabel(label, isExtra) {
+  if (isExtra) return "autres";
+  if (IDENTITY_LABELS.has(label)) return "contrat";
+  if (GROSS_TOTAL_LABELS.has(label)) return "totaux";
+  return "paie";
+}
+
 function labelIsHours(label) {
   return label.endsWith("(en h)");
 }
@@ -432,6 +471,26 @@ export async function buildOutput(headers, sourceRows, options) {
   const nExtra = extraEntries.length;
   const nTotalCols = nStd + nExtra;
 
+  // Zone visuelle (contrat / paie / totaux / autres) de chaque colonne, et
+  // lettre des colonnes marquant la fin d'une zone (pour la bordure de
+  // séparation). Purement dérivé de l'ordre des colonnes réellement
+  // présentes : aucune zone vide ne peut apparaître.
+  const sectionOfIndex = [];
+  for (let i = 1; i <= nStd; i++) {
+    sectionOfIndex[i] = sectionForLabel(activeStandardLabels[i - 1], false);
+  }
+  for (let i = nStd + 1; i <= nTotalCols; i++) {
+    sectionOfIndex[i] = sectionForLabel(extraEntries[i - nStd - 1][1], true);
+  }
+  const sectionBoundaryCols = [];
+  for (let i = 1; i < nTotalCols; i++) {
+    if (sectionOfIndex[i] !== sectionOfIndex[i + 1]) sectionBoundaryCols.push(i);
+  }
+  const sectionOfLetter = {};
+  for (let i = 1; i <= nTotalCols; i++) {
+    sectionOfLetter[colLetterFromIndex(i)] = sectionOfIndex[i];
+  }
+
   // colonne cible (lettre) + libellé pour chaque colonne source reprise,
   // indexé par lettre SOURCE (propre à ce fichier)
   const targetLetterOf = {};
@@ -490,12 +549,17 @@ export async function buildOutput(headers, sourceRows, options) {
     cell.value = label;
     cell.font = FONT_LABEL_BOLD;
     cell.alignment = CENTER;
+    cell.fill = SECTION_HEADER_FILL[sectionOfIndex[i + 1]];
+    cell.border = { bottom: HEADER_BOTTOM_BORDER };
   });
   extraEntries.forEach(([, label], i) => {
-    const cell = ws.getCell(headerRow, nStd + 1 + i);
+    const idx = nStd + 1 + i;
+    const cell = ws.getCell(headerRow, idx);
     cell.value = label;
     cell.font = FONT_LABEL_BOLD;
     cell.alignment = CENTER;
+    cell.fill = SECTION_HEADER_FILL[sectionOfIndex[idx]];
+    cell.border = { bottom: HEADER_BOTTOM_BORDER };
   });
 
   for (const [col, width] of Object.entries(COL_WIDTHS)) {
@@ -546,10 +610,9 @@ export async function buildOutput(headers, sourceRows, options) {
       }
     }
 
-    // tgtCol -> lignes à sommer pour le sous-total département (une ligne
-    // de sous-total contrat si le contrat a plusieurs bulletins, sinon la
-    // ligne du bulletin unique — jamais les deux, pour ne rien compter en
-    // double).
+    // tgtCol -> lignes à sommer pour le sous-total département (la ligne de
+    // sous-total contrat dès qu'un code contrat existe, sinon la ligne du
+    // bulletin lui-même — jamais les deux, pour ne rien compter en double).
     const deptRefRows = {};
 
     for (const group of contractGroups) {
@@ -564,6 +627,7 @@ export async function buildOutput(headers, sourceRows, options) {
           const tgtIdx = colIndexFromLetter(tgtCol);
           const outCell = ws.getCell(targetRow, tgtIdx);
           writeValue(outCell, val, label, srcCol, tgtCol, srcRow, targetRow, fullColmap, frozenStats);
+          outCell.fill = SECTION_DATA_FILL[sectionOfLetter[tgtCol]];
           const hasVal = val !== null && val !== undefined && val !== "";
           if (label.endsWith("(en €)") && hasVal) colsWithAmounts.add(tgtCol);
         }
@@ -575,7 +639,7 @@ export async function buildOutput(headers, sourceRows, options) {
         (a, b) => colIndexFromLetter(a) - colIndexFromLetter(b)
       );
 
-      if (group.rows.length > 1 && group.code) {
+      if (group.code) {
         const contractSubtotalRow = currentRow;
         ws.getCell(contractSubtotalRow, 1).value = `SOUS-TOTAL ${group.code}`;
         for (let c = 1; c <= nTotalCols; c++) {
@@ -641,6 +705,14 @@ export async function buildOutput(headers, sourceRows, options) {
     c.value = { formula: `SUM(${refs})` };
     c.font = FONT_LABEL_BOLD;
     c.numFmt = FMT_EUROS;
+  }
+
+  // -- bordures verticales entre zones de colonnes (contrat / paie / totaux)
+  for (const boundaryCol of sectionBoundaryCols) {
+    for (let r = headerRow; r <= totalRow; r++) {
+      const cell = ws.getCell(r, boundaryCol);
+      cell.border = { ...cell.border, right: SECTION_BORDER };
+    }
   }
 
   const buffer = await wb.xlsx.writeBuffer();
