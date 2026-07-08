@@ -88,7 +88,15 @@ const STANDARD_HEADERS = [
   "Salaire net (en h)", "Salaire net (en €)",
 ];
 
-const COL_WIDTHS = { A: 18, B: 7.88, C: 16.38, D: 11.0, E: 9.63, H: 12.38, I: 25.38 };
+// Largeur de colonne calculée à partir du libellé d'en-tête, pas fixée en
+// dur : chaque colonne est assez large pour son mot le plus long, le reste
+// du libellé passant à la ligne (cf. wrapText sur la ligne d'en-tête) plutôt
+// que d'être masqué.
+function widthForLabel(label) {
+  const longestWord = Math.max(...label.split(" ").map((w) => w.length));
+  return Math.max(11, Math.min(22, longestWord + 4));
+}
+const HEADER_ROW_HEIGHT = 45;
 
 // Normalise un libellé de colonne pour comparaison : minuscule, accents
 // retirés, espaces réduits, et "(h)"/"(€)" unifiés avec leurs variantes
@@ -579,14 +587,12 @@ export async function buildOutput(headers, sourceRows, options) {
     const cell = ws.getCell(headerRow, idx);
     cell.value = label;
     cell.font = FONT_LABEL_BOLD;
-    cell.alignment = CENTER;
+    cell.alignment = { ...CENTER, wrapText: true };
     cell.fill = SECTION_HEADER_FILL[sectionOfIndex[idx]];
     cell.border = { bottom: HEADER_BOTTOM_BORDER };
+    ws.getColumn(idx).width = widthForLabel(label);
   });
-
-  for (const [col, width] of Object.entries(COL_WIDTHS)) {
-    ws.getColumn(col).width = width;
-  }
+  ws.getRow(headerRow).height = HEADER_ROW_HEIGHT;
 
   // -- regroupement des salariés par département -----------------------
   const byDept = {};
