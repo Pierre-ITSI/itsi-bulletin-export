@@ -400,11 +400,13 @@ const GROSS_TOTAL_LABELS = new Set([
   "Salaire net (en h)", "Salaire net (en €)",
 ]);
 // Anciennes colonnes de travail "Garantie Minimale" du fichier source
-// (Total base, MG, Ratio MG, Supp ap. MG, Total somme) : reconnues par
-// motif car elles n'ont pas de libellé cible standard (ce sont toujours
-// des colonnes "extra").
+// (Total base, MG, Ratio MG, Supp ap. MG) : reconnues par motif car elles
+// n'ont pas de libellé cible standard (ce sont toujours des colonnes
+// "extra"). "Total somme" en fait aussi partie à l'origine, mais rejoint la
+// zone violette (cf. isTotalSommeLabel) : elle est placée juste avant les
+// totaux bruts plutôt qu'avec le reste des colonnes de travail.
 const MG_LABEL_PATTERNS = [
-  /^total base\b/, /^mg\b/, /^ratio mg\b/, /^supp .*ap\.? mg/, /^total somme\b/,
+  /^total base\b/, /^mg\b/, /^ratio mg\b/, /^supp .*ap\.? mg/,
 ];
 
 const SECTION_HEADER_FILL = {
@@ -427,9 +429,13 @@ function isMgLabel(label) {
   return MG_LABEL_PATTERNS.some((re) => re.test(norm));
 }
 
+function isTotalSommeLabel(label) {
+  return /^total somme\b/.test(normalizeLabel(label));
+}
+
 function sectionForLabel(label) {
   if (IDENTITY_LABELS.has(label)) return "contrat";
-  if (GROSS_TOTAL_LABELS.has(label)) return "totaux";
+  if (GROSS_TOTAL_LABELS.has(label) || isTotalSommeLabel(label)) return "totaux";
   if (isMgLabel(label)) return "mg";
   return "paie";
 }
@@ -496,19 +502,23 @@ export async function buildOutput(headers, sourceRows, options) {
   const activeStandardLabels = STANDARD_HEADERS.filter((l) => usedTargetLabels.has(l));
   const activePayLabels = activeStandardLabels.filter((l) => !GROSS_TOTAL_LABELS.has(l));
   const activeTotalLabels = activeStandardLabels.filter((l) => GROSS_TOTAL_LABELS.has(l));
-  const extrasNonMg = extraEntries.filter(([, label]) => !isMgLabel(label));
   const extrasMg = extraEntries.filter(([, label]) => isMgLabel(label));
+  const extrasTotalSomme = extraEntries.filter(([, label]) => isTotalSommeLabel(label));
+  const extrasOther = extraEntries.filter(
+    ([, label]) => !isMgLabel(label) && !isTotalSommeLabel(label)
+  );
 
   // Ordre final des colonnes : infos contrat + variables de paie standard
   // (dans l'ordre du format cible, "Jour(s) travaillés" y compris), puis
   // les colonnes sans équivalent standard (Cachet, Déf., Indem.…), puis les
-  // anciennes colonnes de travail Garantie Minimale, et enfin — tout à la
-  // fin du tableau — les totaux bruts (Coût employeur, Salaire brut,
-  // Salaire net imposable, Salaire net).
+  // anciennes colonnes de travail Garantie Minimale, puis "Total somme"
+  // juste avant les totaux bruts (Coût employeur, Salaire brut, Salaire net
+  // imposable, Salaire net), tout à la fin du tableau.
   const columnPlan = [
     ...activePayLabels.map((label) => ({ label, srcCol: labelToSrcCol[label] })),
-    ...extrasNonMg.map(([srcCol, label]) => ({ label, srcCol })),
+    ...extrasOther.map(([srcCol, label]) => ({ label, srcCol })),
     ...extrasMg.map(([srcCol, label]) => ({ label, srcCol })),
+    ...extrasTotalSomme.map(([srcCol, label]) => ({ label, srcCol })),
     ...activeTotalLabels.map((label) => ({ label, srcCol: labelToSrcCol[label] })),
   ];
   const nTotalCols = columnPlan.length;
@@ -532,16 +542,10 @@ export async function buildOutput(headers, sourceRows, options) {
   const fullColmap = { ...targetLetterOf };
 
   // Colonnes à sommer dans les sous-totaux (contrat / département / total
-  // général) : toutes les colonnes "paie" (heures, euros, Jour(s)
-  // travaillés) et "totaux" (Coût employeur, Salaire brut…) ; la zone MG
-  // garde son comportement d'origine (seul "Total somme (€)" s'y prête à
-  // une somme). Les infos contrat (Nom, Taux horaire, dates…) ne sont
-  // jamais sommées.
+  // général) : toutes les colonnes, à l'exception des infos contrat (Nom,
+  // Taux horaire, dates…) qui n'ont pas de sens à additionner.
   function shouldSumForSubtotal(label) {
-    const section = sectionForLabel(label);
-    if (section === "contrat") return false;
-    if (section === "mg") return labelIsEuros(label);
-    return true;
+    return sectionForLabel(label) !== "contrat";
   }
   function numFmtForLabel(label) {
     if (labelIsEuros(label)) return FMT_EUROS;

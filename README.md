@@ -73,13 +73,11 @@ recoupent jamais (pas de double comptage) :
 - **Par département** : somme des sous-totaux contrat du département.
 - **Total général** : somme des sous-totaux de département.
 
-Chaque niveau de sous-total additionne le "Jour(s) travaillés", toutes les
-quantités (heures et euros) de la zone "variables de paie", et les totaux
-bruts de la zone violette (Coût employeur, Salaire brut…). Seules les
-informations contrat (Nom, Taux horaire, dates…) ne sont jamais sommées, et
-la zone Garantie Minimale ne l'est que pour sa colonne en euros
-("Total somme"). `shouldSumForSubtotal()` dans `src/generator.js` centralise
-cette règle.
+Chaque niveau de sous-total additionne **toutes les colonnes à l'exception
+des informations contrat** (Nom, Taux horaire, dates…) : Jour(s) travaillés,
+variables de paie (heures et euros), colonnes Garantie Minimale, et totaux
+bruts (Coût employeur, Salaire brut…). `shouldSumForSubtotal()` dans
+`src/generator.js` centralise cette règle.
 
 Une colonne dont la formule référence la ligne "TOTAL" par salarié du
 fichier source (ex. "Ratio MG", qui répartissait la Garantie Minimale entre
@@ -100,9 +98,10 @@ l'ordre des colonnes suit ce même regroupement, pas seulement leur couleur :
    heures/euros (H. normales, majorations, indemnités…), ainsi que les
    colonnes sans équivalent standard type Cachet/Déf./Indem.
 3. **Garantie Minimale** (rose) : les anciennes colonnes de travail Total
-   base/MG/Ratio MG/Supp ap. MG/Total somme, juste avant les totaux.
+   base/MG/Ratio MG/Supp ap. MG, juste avant les totaux.
 4. **Totaux bruts** (violet), **toujours en toutes dernières colonnes** :
-   Coût employeur, Salaire brut, Salaire net imposable, Salaire net.
+   "Total somme", Coût employeur, Salaire brut, Salaire net imposable,
+   Salaire net.
 
 `Salaire brut (en €)` est **calculée** (formule SOMME de toutes les
 colonnes euros de la zone "variables de paie" de la ligne), et non recopiée
