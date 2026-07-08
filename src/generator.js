@@ -415,7 +415,9 @@ export async function buildOutput(headers, sourceRows, options) {
   const { societe, production, objet, idcc } = options;
 
   const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet("EXPORT BULLETIN", { views: [{ showGridLines: true }] });
+  const ws = wb.addWorksheet("EXPORT BULLETIN", {
+    views: [{ showGridLines: true, state: "frozen", ySplit: 4 }],
+  });
 
   // Résolution du mapping colonnes source -> cible d'après les libellés
   // d'en-tête RÉELS du fichier déposé (peu importe leur position). Seules
