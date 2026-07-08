@@ -7,9 +7,9 @@ app.innerHTML = `
   <main class="wrap">
     <h1>Générateur export bulletin ITSI</h1>
     <p class="subtitle">
-      Déposez un fichier « Combine » (format Marie-Christine) : il sera
-      reformaté au format export bulletin, regroupé par département, avec
-      les formules de calcul conservées.
+      Déposer un fichier d'export de Bulletins excel extrait d'itsi-production,
+      pour obtenir un fichier consolidé, regroupé par département et par
+      contrat, avec les formules conservées.
     </p>
 
     <div id="dropzone" class="dropzone">
