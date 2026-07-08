@@ -1,0 +1,152 @@
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #666;
+  --border: #d7d7d7;
+  --accent: #b45f2e;
+  --accent-bg: #fce5cd;
+  --success: #2e7d32;
+  --error: #c62828;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181d;
+    --fg: #f0f0f0;
+    --muted: #a0a0a0;
+    --border: #3a3d44;
+    --accent-bg: #4a3a26;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem 4rem;
+}
+
+h1 {
+  font-size: 1.6rem;
+  margin-bottom: 0.4rem;
+}
+
+.subtitle {
+  color: var(--muted);
+  margin-top: 0;
+  line-height: 1.5;
+}
+
+.dropzone {
+  margin-top: 2rem;
+  border: 2px dashed var(--border);
+  border-radius: 10px;
+  padding: 3rem 1.5rem;
+  text-align: center;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.dropzone--active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.dz-text {
+  margin: 0 0 1rem;
+  color: var(--muted);
+}
+
+.file-btn {
+  display: inline-block;
+  padding: 0.6rem 1.4rem;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.options {
+  margin-top: 2rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.2rem 1.4rem;
+}
+
+.options legend {
+  color: var(--muted);
+  padding: 0 0.4rem;
+}
+
+.options label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.8rem;
+  font-size: 0.9rem;
+}
+
+.options input {
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 0.95rem;
+}
+
+.status {
+  margin-top: 1.5rem;
+  padding: 0.7rem 1rem;
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+
+.status--info {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.status--success {
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+  color: var(--success);
+}
+
+.status--error {
+  background: color-mix(in srgb, var(--error) 15%, transparent);
+  color: var(--error);
+}
+
+.result {
+  margin-top: 1rem;
+}
+
+.download-btn {
+  display: inline-block;
+  padding: 0.7rem 1.4rem;
+  border-radius: 6px;
+  background: var(--success);
+  color: #fff;
+  text-decoration: none;
+  font-weight: bold;
+}
+
+.notes {
+  margin-top: 1rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.notes p {
+  margin: 0.3rem 0;
+}
