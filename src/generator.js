@@ -520,13 +520,34 @@ export async function buildOutput(headers, sourceRows, options) {
   const targetLetterOf = {};
   const targetLabelOf = {};
   const sectionOfIndex = [];
+  const labelOfTargetLetter = {};
   columnPlan.forEach(({ label, srcCol }, i) => {
     const idx = i + 1;
-    targetLetterOf[srcCol] = colLetterFromIndex(idx);
+    const letter = colLetterFromIndex(idx);
+    targetLetterOf[srcCol] = letter;
     targetLabelOf[srcCol] = label;
     sectionOfIndex[idx] = sectionForLabel(label);
+    labelOfTargetLetter[letter] = label;
   });
   const fullColmap = { ...targetLetterOf };
+
+  // Colonnes à sommer dans les sous-totaux (contrat / département / total
+  // général) : toutes les colonnes "paie" (heures, euros, Jour(s)
+  // travaillés) et "totaux" (Coût employeur, Salaire brut…) ; la zone MG
+  // garde son comportement d'origine (seul "Total somme (€)" s'y prête à
+  // une somme). Les infos contrat (Nom, Taux horaire, dates…) ne sont
+  // jamais sommées.
+  function shouldSumForSubtotal(label) {
+    const section = sectionForLabel(label);
+    if (section === "contrat") return false;
+    if (section === "mg") return labelIsEuros(label);
+    return true;
+  }
+  function numFmtForLabel(label) {
+    if (labelIsEuros(label)) return FMT_EUROS;
+    if (labelIsHours(label)) return FMT_HOURS;
+    return "0"; // Jour(s) travaillés
+  }
 
   const sectionBoundaryCols = [];
   for (let i = 1; i < nTotalCols; i++) {
@@ -669,7 +690,7 @@ export async function buildOutput(headers, sourceRows, options) {
           const hasVal =
             (label === "Salaire brut (en €)" && brutSumCols.length) ||
             (val !== null && val !== undefined && val !== "");
-          if (label.endsWith("(en €)") && hasVal) colsWithAmounts.add(tgtCol);
+          if (shouldSumForSubtotal(label) && hasVal) colsWithAmounts.add(tgtCol);
         }
         currentRow += 1;
       }
@@ -692,7 +713,7 @@ export async function buildOutput(headers, sourceRows, options) {
           const c = ws.getCell(contractSubtotalRow, idx);
           c.value = { formula: `SUM(${tgtCol}${groupFirstRow}:${tgtCol}${groupLastRow})` };
           c.fill = FILL_CONTRACT;
-          c.numFmt = FMT_EUROS;
+          c.numFmt = numFmtForLabel(labelOfTargetLetter[tgtCol]);
           (deptRefRows[tgtCol] ||= []).push(contractSubtotalRow);
         }
         currentRow += 1;
@@ -719,7 +740,7 @@ export async function buildOutput(headers, sourceRows, options) {
       const c = ws.getCell(deptSubtotalRow, idx);
       c.value = { formula: `SUM(${refs})` };
       c.fill = FILL_DEPT;
-      c.numFmt = FMT_EUROS;
+      c.numFmt = numFmtForLabel(labelOfTargetLetter[tgtCol]);
       (subtotalRefs[tgtCol] ||= []).push(deptSubtotalRow);
     }
 
@@ -744,7 +765,7 @@ export async function buildOutput(headers, sourceRows, options) {
     const c = ws.getCell(totalRow, idx);
     c.value = { formula: `SUM(${refs})` };
     c.font = FONT_LABEL_BOLD;
-    c.numFmt = FMT_EUROS;
+    c.numFmt = numFmtForLabel(labelOfTargetLetter[tgtCol]);
   }
 
   // -- bordures verticales entre zones de colonnes (contrat / paie / totaux)

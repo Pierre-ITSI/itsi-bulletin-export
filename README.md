@@ -73,6 +73,14 @@ recoupent jamais (pas de double comptage) :
 - **Par département** : somme des sous-totaux contrat du département.
 - **Total général** : somme des sous-totaux de département.
 
+Chaque niveau de sous-total additionne le "Jour(s) travaillés", toutes les
+quantités (heures et euros) de la zone "variables de paie", et les totaux
+bruts de la zone violette (Coût employeur, Salaire brut…). Seules les
+informations contrat (Nom, Taux horaire, dates…) ne sont jamais sommées, et
+la zone Garantie Minimale ne l'est que pour sa colonne en euros
+("Total somme"). `shouldSumForSubtotal()` dans `src/generator.js` centralise
+cette règle.
+
 Une colonne dont la formule référence la ligne "TOTAL" par salarié du
 fichier source (ex. "Ratio MG", qui répartissait la Garantie Minimale entre
 les bulletins d'un même salarié) ne peut pas être traduite telle quelle,
