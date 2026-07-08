@@ -32,19 +32,6 @@ const IDENTITY_RENAME = {
   matricule: "Matricule salarié production (itsi)",
 };
 
-// Colonnes "de travail" internes au fichier source, sans équivalent, non
-// reprises : elles servaient uniquement à répartir la Garantie Minimale
-// entre les bulletins d'un même salarié (Total base, MG, Ratio MG,
-// Supp ap. MG, Total somme), une notion qui n'existe pas dans le format
-// cible.
-const DROPPED_PATTERNS = [
-  /^total base\b/,
-  /^mg\b/,
-  /^ratio mg\b/,
-  /^supp .*ap\.? mg/,
-  /^total somme\b/,
-];
-
 const STANDARD_HEADERS = [
   "Code bulletin (itsi)", "Statut (itsi)", "Code contrat (itsi)",
   "Code salarié projet", "Matricule salarié production (itsi)", "Nom",
@@ -117,11 +104,6 @@ function normalizeLabel(s) {
 }
 
 const TARGET_NORM_TO_LABEL = new Map(STANDARD_HEADERS.map((l) => [normalizeLabel(l), l]));
-const TARGET_LABEL_TO_INDEX = new Map(STANDARD_HEADERS.map((l, i) => [l, i + 1]));
-
-function isDroppedLabel(normLabel) {
-  return DROPPED_PATTERNS.some((re) => re.test(normLabel));
-}
 
 // Pour les colonnes "extra" (sans équivalent standard), on garde le libellé
 // d'origine mais on harmonise le suffixe "(h)"/"(€)" en "(en h)"/"(en €)"
@@ -148,7 +130,6 @@ function resolveColumnMapping(headers) {
     const label = String(rawLabel).trim();
     const norm = normalizeLabel(label);
     if (!norm) continue;
-    if (isDroppedLabel(norm)) continue;
 
     const renamedLabel = IDENTITY_RENAME[norm] || label;
     const renamedNorm = normalizeLabel(renamedLabel);
@@ -256,18 +237,25 @@ function classifyMetier(metier) {
 
 const CELL_RE = /(\$?)([A-Za-z]{1,3})(\$?)(\d+)/g;
 
-function translateFormula(formula, srcRow, newRow, colmap, warnings, coordForWarning) {
-  return formula.replace(CELL_RE, (match, d1, col, d2, row) => {
+// Traduit une formule vers la nouvelle ligne/colonnes. Une formule qui
+// référence une AUTRE ligne (ex. "Ratio MG" = BE2/BE4, où la ligne 4 était
+// la ligne "TOTAL" du salarié dans le fichier source) ne peut pas être
+// traduite : cette ligne "TOTAL" n'existe plus dans le format cible (seul
+// le sous-total par département est conservé). `crossRow` signale ce cas
+// à l'appelant, qui fige alors la valeur calculée plutôt que d'écrire une
+// formule cassée.
+function translateFormula(formula, srcRow, newRow, colmap) {
+  let crossRow = false;
+  const text = formula.replace(CELL_RE, (match, d1, col, d2, row) => {
     const rowNum = parseInt(row, 10);
     if (rowNum !== srcRow) {
-      warnings.push(
-        `${coordForWarning}: référence à une autre ligne (${match}) non traduite, à vérifier.`
-      );
+      crossRow = true;
       return match;
     }
     const newCol = colmap[col.toUpperCase()] || col.toUpperCase();
     return `${d1}${newCol}${d2}${newRow}`;
   });
+  return { text, crossRow };
 }
 
 // --------------------------------------------------------------------------
@@ -323,7 +311,11 @@ function countJours(v) {
 // accommode sans problème. exceljs reste utilisé côté écriture (styles).
 function cellRawValue(cell) {
   if (!cell) return null;
-  if (cell.f !== undefined) return { formula: `=${cell.f}` };
+  if (cell.f !== undefined) {
+    // cached : valeur de repli si la formule s'avère intraduisible (cf.
+    // translateFormula / crossRow)
+    return { formula: `=${cell.f}`, cached: typeof cell.v === "number" ? cell.v : null };
+  }
   if (cell.v === undefined) return null;
   return cell.v;
 }
@@ -370,8 +362,10 @@ export async function readSource(arrayBuffer) {
 // --------------------------------------------------------------------------
 
 const FILL_DEPT = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFCE5CD" } };
+const FILL_CONTRACT = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF2F2F2" } };
 const FONT_LABEL_BOLD = { name: "Arial", bold: true };
 const FONT_DEPT = { name: "Arial", size: 8, italic: true };
+const FONT_CONTRACT = { name: "Arial", size: 8, italic: true };
 const FMT_HOURS = "#,##0.00";
 const FMT_EUROS = '#,##0.00"€"';
 const FMT_DATE = "dd/mm/yyyy";
@@ -384,7 +378,7 @@ function labelIsEuros(label) {
   return label.endsWith("(en €)");
 }
 
-function writeValue(cell, val, label, srcCol, tgtCol, srcRow, targetRow, colmap, warnings) {
+function writeValue(cell, val, label, srcCol, tgtCol, srcRow, targetRow, colmap, frozenStats) {
   if (label === "Date de début" || label === "Date de fin") {
     const d = parseDate(val);
     cell.value = d;
@@ -398,14 +392,17 @@ function writeValue(cell, val, label, srcCol, tgtCol, srcRow, targetRow, colmap,
 
   const isFormula = val && typeof val === "object" && typeof val.formula === "string";
   if (isFormula) {
-    const translated = translateFormula(
-      val.formula, srcRow, targetRow, colmap, warnings,
-      `${tgtCol}${targetRow} (source ${srcCol}${srcRow})`
-    );
-    cell.value = { formula: translated.slice(1) };
-  } else if (val && typeof val === "object" && val.formula !== undefined) {
-    // formule non résolue proprement, on ignore
-    cell.value = null;
+    const { text, crossRow } = translateFormula(val.formula, srcRow, targetRow, colmap);
+    if (crossRow) {
+      // La formule référence une ligne absente du nouveau format (ex. la
+      // ligne "TOTAL" par salarié du fichier source, remplacée ici par le
+      // seul sous-total de département) : on fige la dernière valeur
+      // calculée plutôt que d'écrire une formule cassée.
+      cell.value = val.cached;
+      frozenStats.set(label, (frozenStats.get(label) || 0) + 1);
+    } else {
+      cell.value = { formula: text.slice(1) };
+    }
   } else {
     cell.value = val === undefined ? null : val;
   }
@@ -420,11 +417,16 @@ export async function buildOutput(headers, sourceRows, options) {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("EXPORT BULLETIN", { views: [{ showGridLines: true }] });
 
-  const nStd = STANDARD_HEADERS.length; // colonnes A..DI
-
   // Résolution du mapping colonnes source -> cible d'après les libellés
-  // d'en-tête RÉELS du fichier déposé (peu importe leur position).
+  // d'en-tête RÉELS du fichier déposé (peu importe leur position). Seules
+  // les colonnes standard effectivement présentes dans ce fichier sont
+  // retenues (dans l'ordre du format cible) — le tableau de sortie reflète
+  // exactement le fichier déposé, ni plus ni moins.
   const { letterToTargetLabel, extraEntries } = resolveColumnMapping(headers);
+  const usedTargetLabels = new Set(Object.values(letterToTargetLabel));
+  const activeStandardLabels = STANDARD_HEADERS.filter((l) => usedTargetLabels.has(l));
+  const activeLabelToIndex = new Map(activeStandardLabels.map((l, i) => [l, i + 1]));
+  const nStd = activeStandardLabels.length;
   const nExtra = extraEntries.length;
   const nTotalCols = nStd + nExtra;
 
@@ -433,7 +435,7 @@ export async function buildOutput(headers, sourceRows, options) {
   const targetLetterOf = {};
   const targetLabelOf = {};
   for (const [srcCol, targetLabel] of Object.entries(letterToTargetLabel)) {
-    targetLetterOf[srcCol] = colLetterFromIndex(TARGET_LABEL_TO_INDEX.get(targetLabel));
+    targetLetterOf[srcCol] = colLetterFromIndex(activeLabelToIndex.get(targetLabel));
     targetLabelOf[srcCol] = targetLabel;
   }
   extraEntries.forEach(([srcCol, label], i) => {
@@ -449,6 +451,7 @@ export async function buildOutput(headers, sourceRows, options) {
   const metierCol = srcLetterForTargetLabel("Métier");
   const debutCol = srcLetterForTargetLabel("Date de début");
   const finCol = srcLetterForTargetLabel("Date de fin");
+  const contratCol = srcLetterForTargetLabel("Code contrat (itsi)");
 
   // -- bandeau d'en-tête (lignes 1-3) --------------------------------
   ws.getCell("F1").value = "Société"; ws.getCell("F1").font = FONT_LABEL_BOLD;
@@ -480,7 +483,7 @@ export async function buildOutput(headers, sourceRows, options) {
 
   // -- ligne d'entête des colonnes (ligne 4) --------------------------
   const headerRow = 4;
-  STANDARD_HEADERS.forEach((label, i) => {
+  activeStandardLabels.forEach((label, i) => {
     const cell = ws.getCell(headerRow, i + 1);
     cell.value = label;
     cell.font = FONT_LABEL_BOLD;
@@ -509,8 +512,9 @@ export async function buildOutput(headers, sourceRows, options) {
   }
 
   const warnings = [];
+  const frozenStats = new Map(); // libellé -> nb de formules figées (cf. writeValue)
   let currentRow = headerRow + 2; // ligne 5 vide comme dans le modèle
-  const subtotalRefs = {}; // tgtCol -> [subtotalRow, ...]
+  const subtotalRefs = {}; // tgtCol -> [ligne sous-total département, ...]
 
   for (const dept of DEPARTMENT_ORDER) {
     const entries = byDept[dept];
@@ -525,44 +529,102 @@ export async function buildOutput(headers, sourceRows, options) {
     deptCell.font = FONT_DEPT;
     currentRow += 1;
 
-    const firstDataRow = currentRow;
-    const colsWithAmounts = new Set();
-
-    for (const { srcRow, data } of entries) {
-      const targetRow = currentRow;
-      for (const [srcCol, tgtCol] of Object.entries(targetLetterOf)) {
-        const val = data[srcCol];
-        const label = targetLabelOf[srcCol];
-        const tgtIdx = colIndexFromLetter(tgtCol);
-        const outCell = ws.getCell(targetRow, tgtIdx);
-        writeValue(outCell, val, label, srcCol, tgtCol, srcRow, targetRow, fullColmap, warnings);
-        const hasVal = val !== null && val !== undefined && val !== "";
-        if (label.endsWith("(en €)") && hasVal) colsWithAmounts.add(tgtCol);
+    // Regroupe les lignes consécutives partageant le même code contrat
+    // (un salarié peut avoir plusieurs bulletins sur la période pour un
+    // même contrat) pour y ajouter un sous-total contrat.
+    const contractGroups = [];
+    for (const entry of entries) {
+      const code = contratCol ? entry.data[contratCol] : undefined;
+      const hasCode = code !== undefined && code !== null && code !== "";
+      const last = contractGroups[contractGroups.length - 1];
+      if (last && hasCode && last.code === code) {
+        last.rows.push(entry);
+      } else {
+        contractGroups.push({ code: hasCode ? code : null, rows: [entry] });
       }
-      currentRow += 1;
     }
 
-    const lastDataRow = currentRow - 1;
+    // tgtCol -> lignes à sommer pour le sous-total département (une ligne
+    // de sous-total contrat si le contrat a plusieurs bulletins, sinon la
+    // ligne du bulletin unique — jamais les deux, pour ne rien compter en
+    // double).
+    const deptRefRows = {};
 
-    const subtotalRow = currentRow;
-    ws.getCell(subtotalRow, 1).value = `SOUS-TOTAL ${dept}`;
+    for (const group of contractGroups) {
+      const groupFirstRow = currentRow;
+      const colsWithAmounts = new Set();
+
+      for (const { srcRow, data } of group.rows) {
+        const targetRow = currentRow;
+        for (const [srcCol, tgtCol] of Object.entries(targetLetterOf)) {
+          const val = data[srcCol];
+          const label = targetLabelOf[srcCol];
+          const tgtIdx = colIndexFromLetter(tgtCol);
+          const outCell = ws.getCell(targetRow, tgtIdx);
+          writeValue(outCell, val, label, srcCol, tgtCol, srcRow, targetRow, fullColmap, frozenStats);
+          const hasVal = val !== null && val !== undefined && val !== "";
+          if (label.endsWith("(en €)") && hasVal) colsWithAmounts.add(tgtCol);
+        }
+        currentRow += 1;
+      }
+
+      const groupLastRow = currentRow - 1;
+      const sortedGroupCols = [...colsWithAmounts].sort(
+        (a, b) => colIndexFromLetter(a) - colIndexFromLetter(b)
+      );
+
+      if (group.rows.length > 1 && group.code) {
+        const contractSubtotalRow = currentRow;
+        ws.getCell(contractSubtotalRow, 1).value = `SOUS-TOTAL ${group.code}`;
+        for (let c = 1; c <= nTotalCols; c++) {
+          ws.getCell(contractSubtotalRow, c).fill = FILL_CONTRACT;
+        }
+        ws.getCell(contractSubtotalRow, 1).font = FONT_CONTRACT;
+
+        for (const tgtCol of sortedGroupCols) {
+          const idx = colIndexFromLetter(tgtCol);
+          const c = ws.getCell(contractSubtotalRow, idx);
+          c.value = { formula: `SUM(${tgtCol}${groupFirstRow}:${tgtCol}${groupLastRow})` };
+          c.fill = FILL_CONTRACT;
+          c.numFmt = FMT_EUROS;
+          (deptRefRows[tgtCol] ||= []).push(contractSubtotalRow);
+        }
+        currentRow += 1;
+      } else {
+        for (const tgtCol of sortedGroupCols) {
+          (deptRefRows[tgtCol] ||= []).push(groupFirstRow);
+        }
+      }
+    }
+
+    const deptSubtotalRow = currentRow;
+    ws.getCell(deptSubtotalRow, 1).value = `SOUS-TOTAL ${dept}`;
     for (let c = 1; c <= nTotalCols; c++) {
-      ws.getCell(subtotalRow, c).fill = FILL_DEPT;
+      ws.getCell(deptSubtotalRow, c).fill = FILL_DEPT;
     }
-    ws.getCell(subtotalRow, 1).font = FONT_DEPT;
+    ws.getCell(deptSubtotalRow, 1).font = FONT_DEPT;
 
-    const sortedCols = [...colsWithAmounts].sort((a, b) => colIndexFromLetter(a) - colIndexFromLetter(b));
-    for (const tgtCol of sortedCols) {
+    const sortedDeptCols = Object.keys(deptRefRows).sort(
+      (a, b) => colIndexFromLetter(a) - colIndexFromLetter(b)
+    );
+    for (const tgtCol of sortedDeptCols) {
       const idx = colIndexFromLetter(tgtCol);
-      const c = ws.getCell(subtotalRow, idx);
-      c.value = { formula: `SUM(${tgtCol}${firstDataRow}:${tgtCol}${lastDataRow})` };
+      const refs = deptRefRows[tgtCol].map((r) => `${tgtCol}${r}`).join(",");
+      const c = ws.getCell(deptSubtotalRow, idx);
+      c.value = { formula: `SUM(${refs})` };
       c.fill = FILL_DEPT;
       c.numFmt = FMT_EUROS;
-      if (!subtotalRefs[tgtCol]) subtotalRefs[tgtCol] = [];
-      subtotalRefs[tgtCol].push(subtotalRow);
+      (subtotalRefs[tgtCol] ||= []).push(deptSubtotalRow);
     }
 
-    currentRow = subtotalRow + 2; // ligne vide de séparation
+    currentRow = deptSubtotalRow + 2; // ligne vide de séparation
+  }
+
+  for (const [label, count] of frozenStats) {
+    warnings.push(
+      `${label} : ${count} valeur(s) figée(s) au lieu d'une formule vivante ` +
+      `(référence à une ligne "TOTAL" par salarié absente du nouveau format).`
+    );
   }
 
   // -- ligne TOTAL GÉNÉRAL ---------------------------------------------

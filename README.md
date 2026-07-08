@@ -44,20 +44,39 @@ mapping se fait dans `resolveColumnMapping()` (`src/generator.js`) :
 - Toute colonne source dont le libellé (normalisé : minuscule, accents et
   unités "(h)"/"(€)" harmonisés) correspond à un libellé du format cible
   (`STANDARD_HEADERS`) est placée à la position standard correspondante,
-  quelle que soit sa position dans le fichier source.
+  quelle que soit sa position dans le fichier source. **Seules les colonnes
+  standard réellement présentes dans le fichier déposé sont écrites** — le
+  tableau de sortie ne contient jamais de colonne vide "au cas où".
 - Quelques champs "identité" portent un nom différent entre les deux
   formats (`IDENTITY_RENAME` : Code bulletin, Statut, Code contrat, Code
   employé, Matricule).
-- Les colonnes de travail internes (Total base, MG, Ratio MG, Supp ap. MG,
-  Total somme — qui servaient à répartir la Garantie Minimale entre deux
-  bulletins d'un même salarié) sont détectées par motif (`DROPPED_PATTERNS`)
-  et non reprises.
-- Toute colonne source restante, sans équivalent dans le format cible (ex.
-  Cachet grp./iso., Indem. Matériel, Indem. VHSS…), est ajoutée
-  automatiquement en fin de tableau pour ne perdre aucune donnée — la liste
-  de ces colonnes "extra" varie donc d'un fichier à l'autre.
+- **Toute colonne source restante**, sans équivalent dans le format cible
+  (ex. Cachet grp./iso., Indem. Matériel, Indem. VHSS, ou les anciennes
+  colonnes de travail Total base/MG/Ratio MG/Supp ap. MG/Total somme), est
+  ajoutée automatiquement en fin de tableau pour ne perdre aucune donnée —
+  la liste de ces colonnes "extra" varie donc d'un fichier à l'autre. Aucune
+  colonne du fichier déposé n'est jamais silencieusement supprimée.
 
 Le classement des métiers par département (`METIER_TO_DEPT`) reste, lui,
 une liste explicite à compléter si de nouveaux intitulés de poste
 apparaissent ; un métier non reconnu est classé dans "AUTRES" et signalé à
 l'utilisateur dans l'interface plutôt que de faire échouer la génération.
+
+## Sous-totaux
+
+Trois niveaux de sous-total sont générés, avec des formules SOMME qui ne se
+recoupent jamais (pas de double comptage) :
+
+- **Par contrat** (`Code contrat`) : les bulletins consécutifs d'un même
+  contrat sont sommés dès qu'il y en a plusieurs sur la période ; un contrat
+  à bulletin unique n'a pas de ligne de sous-total (il n'apporterait rien).
+- **Par département** : somme des sous-totaux contrat (ou, à défaut, des
+  bulletins uniques) du département.
+- **Total général** : somme des sous-totaux de département.
+
+Une colonne dont la formule référence la ligne "TOTAL" par salarié du
+fichier source (ex. "Ratio MG", qui répartissait la Garantie Minimale entre
+les bulletins d'un même salarié) ne peut pas être traduite telle quelle,
+cette ligne n'existant plus dans le nouveau format : sa dernière valeur
+calculée est alors figée à la place, et un message le signale dans
+l'interface.
