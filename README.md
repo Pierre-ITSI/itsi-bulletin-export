@@ -93,7 +93,7 @@ recoupent jamais (pas de double comptage) :
 Chaque niveau de sous-total additionne **toutes les colonnes à l'exception
 des informations contrat** (Nom, Taux horaire, dates…) : Jour(s) travaillés,
 variables de paie (heures et euros), colonnes Garantie Minimale, et totaux
-bruts (Coût employeur, Salaire brut…). `shouldSumForSubtotal()` dans
+bruts (Salaire brut, Coût employeur…). `shouldSumForSubtotal()` dans
 `src/generator.js` centralise cette règle.
 
 Une colonne dont la formule référence la ligne "TOTAL" par salarié du
@@ -127,7 +127,7 @@ l'ordre des colonnes suit ce même regroupement, pas seulement leur couleur :
 3. **Garantie Minimale** (rose) : les anciennes colonnes de travail Total
    base/MG/Ratio MG/Supp ap. MG, juste avant les totaux.
 4. **Totaux bruts** (violet), **toujours en toutes dernières colonnes** :
-   Coût employeur, Salaire brut, Salaire net imposable, Salaire net, puis
+   Salaire brut, Coût employeur, Salaire net imposable, Salaire net, puis
    "Total indemnité (NS)" si le fichier déposé contient au moins une colonne
    "(NS)" (ex. Indem. Matériel (NS)) — sinon cette dernière colonne
    n'apparaît pas.

@@ -82,8 +82,8 @@ const STANDARD_HEADERS = [
   "Retrait equi - H. supp. 175% (en h)", "Retrait equi - H. supp. 175% (en €)",
   "Retrait equi - H. supp. 200% (en h)", "Retrait equi - H. supp. 200% (en €)",
   "Retrait plafond majo. (en h)", "Retrait plafond majo. (en €)",
-  "Prime except. (en h)", "Prime except. (en €)", "Coût employeur (en h)",
-  "Coût employeur (en €)", "Salaire brut (en h)", "Salaire brut (en €)",
+  "Prime except. (en h)", "Prime except. (en €)", "Salaire brut (en h)",
+  "Salaire brut (en €)", "Coût employeur (en h)", "Coût employeur (en €)",
   "Salaire net imposable (en h)", "Salaire net imposable (en €)",
   "Salaire net (en h)", "Salaire net (en €)",
 ];
@@ -781,7 +781,7 @@ const CENTER = { horizontal: "center", vertical: "middle" };
 // variables de paie (y compris "Jour(s) travaillés" et les colonnes sans
 // équivalent standard type Cachet/Déf./Indem.), puis les colonnes "de
 // travail" liées à la Garantie Minimale, et enfin — tout à la fin du
-// tableau — les totaux bruts (Coût employeur, Salaire brut, Salaire net
+// tableau — les totaux bruts (Salaire brut, Coût employeur, Salaire net
 // imposable, Salaire net). L'ORDRE des colonnes suit ce même regroupement
 // (cf. buildColumnLayout), pas seulement leur couleur.
 const IDENTITY_LABELS = new Set([
@@ -929,7 +929,7 @@ export async function buildOutput(headers, sourceRows, options) {
   // d'une colonne dérivée listant les dates travaillées, cf. plus bas), puis
   // les colonnes sans équivalent standard (Cachet, Déf., Indem.…), puis les
   // anciennes colonnes de travail Garantie Minimale, puis les totaux bruts
-  // (Coût employeur, Salaire brut, Salaire net imposable, Salaire net), puis
+  // (Salaire brut, Coût employeur, Salaire net imposable, Salaire net), puis
   // "Total indemnité (NS)" (calculée) en toute dernière colonne.
   const activePayEntries = [];
   for (const label of activePayLabels) {
