@@ -100,6 +100,14 @@ cette ligne n'existant plus dans le nouveau format : sa dernière valeur
 calculée est alors figée à la place, et un message le signale dans
 l'interface.
 
+La colonne source "Jour(s) travaillés" (liste de dates séparées par ";")
+donne lieu à **deux** colonnes dans l'export : "Jours travaillés (dates)",
+juste avant, qui liste ces dates en clair (JJ/MM/AAAA) pour vérification,
+et "Jour(s) travaillés" qui garde le nombre de jours (`countJours()`,
+`formatWorkedDates()` dans `src/generator.js`) utilisé par les sous-totaux.
+La colonne "dates" n'est jamais sommée (texte, pas nombre) : elle reste
+vide sur les lignes de sous-total.
+
 ## Mise en forme et ordre des colonnes
 
 Les colonnes sont regroupées en 4 zones pastel, séparées par une bordure
@@ -108,9 +116,10 @@ l'ordre des colonnes suit ce même regroupement, pas seulement leur couleur :
 
 1. **Informations contrat** (bleu) : Code bulletin, Statut, Code contrat,
    Nom, Prénom, Métier, dates, taux horaire…
-2. **Variables de paie** (vert) : Jour(s) travaillés, toutes les colonnes
-   heures/euros (H. normales, majorations, indemnités…), ainsi que les
-   colonnes sans équivalent standard type Cachet/Déf./Indem.
+2. **Variables de paie** (vert) : Jours travaillés (dates), Jour(s)
+   travaillés, toutes les colonnes heures/euros (H. normales, majorations,
+   indemnités…), ainsi que les colonnes sans équivalent standard type
+   Cachet/Déf./Indem.
 3. **Garantie Minimale** (rose) : les anciennes colonnes de travail Total
    base/MG/Ratio MG/Supp ap. MG, juste avant les totaux.
 4. **Totaux bruts** (violet), **toujours en toutes dernières colonnes** :

@@ -677,6 +677,37 @@ function countJours(v) {
   return String(v).split(";").filter((p) => p.trim()).length;
 }
 
+// La colonne source "Jour(s) travaillés" stocke une liste de dates séparées
+// par ";" (ex. "2026-06-29;2026-06-30"), au format ISO ou JJ/MM/AAAA selon
+// les exports. Formatte cette liste en texte lisible JJ/MM/AAAA pour la
+// colonne "Jours travaillés (dates)", ajoutée juste avant le nombre de
+// jours calculé par `countJours`.
+function parseIsoOrFrenchDate(s) {
+  const iso = String(s).trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (iso) {
+    const [, y, mo, d] = iso;
+    return new Date(Date.UTC(+y, +mo - 1, +d));
+  }
+  const fr = String(s).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (fr) {
+    const [, d, mo, y] = fr;
+    return new Date(Date.UTC(+y, +mo - 1, +d));
+  }
+  return null;
+}
+
+function formatWorkedDates(v) {
+  if (v === null || v === undefined || v === "") return null;
+  const parts = String(v).split(";").map((p) => p.trim()).filter(Boolean);
+  return parts
+    .map((p) => {
+      const d = parseIsoOrFrenchDate(p);
+      if (!d) return p;
+      return `${String(d.getUTCDate()).padStart(2, "0")}/${String(d.getUTCMonth() + 1).padStart(2, "0")}/${d.getUTCFullYear()}`;
+    })
+    .join(", ");
+}
+
 // La lecture du fichier source passe par SheetJS (xlsx) plutôt qu'exceljs :
 // les fichiers "Combine" proviennent souvent de copier-coller entre feuilles
 // et contiennent des références de "formules partagées" Excel orphelines
@@ -875,13 +906,28 @@ export async function buildOutput(headers, sourceRows, options) {
   );
 
   // Ordre final des colonnes : infos contrat + variables de paie standard
-  // (dans l'ordre du format cible, "Jour(s) travaillés" y compris), puis
+  // (dans l'ordre du format cible, "Jour(s) travaillés" y compris — précédée
+  // d'une colonne dérivée listant les dates travaillées, cf. plus bas), puis
   // les colonnes sans équivalent standard (Cachet, Déf., Indem.…), puis les
   // anciennes colonnes de travail Garantie Minimale, puis "Total somme"
   // juste avant les totaux bruts (Coût employeur, Salaire brut, Salaire net
   // imposable, Salaire net), tout à la fin du tableau.
+  const activePayEntries = [];
+  for (const label of activePayLabels) {
+    if (label === "Jour(s) travaillés" && labelToSrcCol[label]) {
+      // Colonne dérivée : mêmes données source que "Jour(s) travaillés",
+      // affichées en liste de dates plutôt qu'en nombre. `derive` la
+      // distingue de la colonne canonique lors de l'écriture des lignes.
+      activePayEntries.push({
+        label: "Jours travaillés (dates)",
+        srcCol: labelToSrcCol[label],
+        derive: "dates",
+      });
+    }
+    activePayEntries.push({ label, srcCol: labelToSrcCol[label] });
+  }
   const columnPlan = [
-    ...activePayLabels.map((label) => ({ label, srcCol: labelToSrcCol[label] })),
+    ...activePayEntries,
     ...extrasOther.map(([srcCol, label]) => ({ label, srcCol })),
     ...extrasMg.map(([srcCol, label]) => ({ label, srcCol })),
     ...extrasTotalSomme.map(([srcCol, label]) => ({ label, srcCol })),
@@ -892,18 +938,26 @@ export async function buildOutput(headers, sourceRows, options) {
   // colonne cible (lettre) + libellé pour chaque colonne source reprise,
   // indexé par lettre SOURCE (propre à ce fichier), et zone visuelle de
   // chaque colonne cible (purement dérivée de columnPlan : aucune zone
-  // vide ne peut apparaître).
+  // vide ne peut apparaître). Les colonnes "dérivées" (ex. dates
+  // travaillées) partagent leur colonne source avec une colonne canonique
+  // déjà indexée dans `targetLetterOf` : elles sont donc collectées à part
+  // dans `derivedEntries` plutôt que d'écraser cette entrée.
   const targetLetterOf = {};
   const targetLabelOf = {};
   const sectionOfIndex = [];
   const labelOfTargetLetter = {};
-  columnPlan.forEach(({ label, srcCol }, i) => {
+  const derivedEntries = [];
+  columnPlan.forEach(({ label, srcCol, derive }, i) => {
     const idx = i + 1;
     const letter = colLetterFromIndex(idx);
+    labelOfTargetLetter[letter] = label;
+    sectionOfIndex[idx] = sectionForLabel(label);
+    if (derive) {
+      derivedEntries.push({ srcCol, tgtCol: letter, label, derive });
+      return;
+    }
     targetLetterOf[srcCol] = letter;
     targetLabelOf[srcCol] = label;
-    sectionOfIndex[idx] = sectionForLabel(label);
-    labelOfTargetLetter[letter] = label;
   });
   const fullColmap = { ...targetLetterOf };
 
@@ -1070,6 +1124,11 @@ export async function buildOutput(headers, sourceRows, options) {
             (label === "Salaire brut (en €)" && brutSumCols.length) ||
             (val !== null && val !== undefined && val !== "");
           if (shouldSumForSubtotal(label) && hasVal) colsWithAmounts.add(tgtCol);
+        }
+        for (const { srcCol, tgtCol, derive } of derivedEntries) {
+          const outCell = ws.getCell(targetRow, colIndexFromLetter(tgtCol));
+          if (derive === "dates") outCell.value = formatWorkedDates(data[srcCol]);
+          outCell.fill = SECTION_DATA_FILL[sectionOfLetter[tgtCol]];
         }
         currentRow += 1;
       }
