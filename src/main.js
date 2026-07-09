@@ -1,16 +1,45 @@
 import "./style.css";
-import { generate } from "./generator.js";
+import { generate, generateSheet } from "./generator.js";
 
 const app = document.querySelector("#app");
+
+const FILE_TYPES = {
+  combine: {
+    label: "Combine (bulletins de paie)",
+    subtitle:
+      "Déposer un fichier d'export de Bulletins excel extrait d'itsi-production, " +
+      "pour obtenir un fichier consolidé, regroupé par département et par " +
+      "contrat, avec les formules conservées.",
+    run: generate,
+    suffix: "_export_bulletin.xlsx",
+  },
+  feuille: {
+    label: "Feuille (relevés d'heures)",
+    subtitle:
+      "Déposer un fichier d'export de Feuilles excel extrait d'itsi-production " +
+      "(SheetExcelExport), pour obtenir un fichier consolidé, regroupé par " +
+      "département et par matricule, avec les formules conservées.",
+    run: generateSheet,
+    suffix: "_export_feuilles.xlsx",
+  },
+};
 
 app.innerHTML = `
   <main class="wrap">
     <h1>Générateur export bulletin ITSI</h1>
-    <p class="subtitle">
-      Déposer un fichier d'export de Bulletins excel extrait d'itsi-production,
-      pour obtenir un fichier consolidé, regroupé par département et par
-      contrat, avec les formules conservées.
-    </p>
+    <p id="subtitle" class="subtitle"></p>
+
+    <fieldset class="options">
+      <legend>Type de fichier</legend>
+      <label class="radio-label">
+        <input type="radio" name="file-type" value="combine" checked />
+        ${FILE_TYPES.combine.label}
+      </label>
+      <label class="radio-label">
+        <input type="radio" name="file-type" value="feuille" />
+        ${FILE_TYPES.feuille.label}
+      </label>
+    </fieldset>
 
     <div id="dropzone" class="dropzone">
       <p class="dz-text">Glissez-déposez le fichier .xlsx ici<br />ou</p>
@@ -32,6 +61,19 @@ app.innerHTML = `
     <div id="result" class="result" hidden></div>
   </main>
 `;
+
+const subtitleEl = document.querySelector("#subtitle");
+const fileTypeInputs = document.querySelectorAll('input[name="file-type"]');
+
+function currentFileType() {
+  return [...fileTypeInputs].find((r) => r.checked)?.value || "combine";
+}
+
+function updateSubtitle() {
+  subtitleEl.textContent = FILE_TYPES[currentFileType()].subtitle;
+}
+fileTypeInputs.forEach((r) => r.addEventListener("change", updateSubtitle));
+updateSubtitle();
 
 const dropzone = document.querySelector("#dropzone");
 const fileInput = document.querySelector("#file-input");
@@ -90,14 +132,15 @@ async function handleFile(file) {
   };
 
   try {
+    const fileType = FILE_TYPES[currentFileType()];
     const arrayBuffer = await file.arrayBuffer();
-    const { buffer, warnings, unclassified } = await generate(arrayBuffer, options);
+    const { buffer, warnings, unclassified } = await fileType.run(arrayBuffer, options);
 
     const blob = new Blob([buffer], {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     });
     const url = URL.createObjectURL(blob);
-    const outName = file.name.replace(/\.xlsx$/i, "") + "_export_bulletin.xlsx";
+    const outName = file.name.replace(/\.xlsx$/i, "") + fileType.suffix;
 
     resultEl.hidden = false;
     resultEl.innerHTML = `

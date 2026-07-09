@@ -125,7 +125,14 @@ function toDisplayLabel(label) {
 // soit leur ordre), quelle colonne cible standard chaque colonne source
 // alimente, et quelles colonnes n'ont aucun équivalent standard (à ajouter
 // en fin de tableau pour ne perdre aucune donnée).
-function resolveColumnMapping(headers) {
+// `targetNormToLabel`/`identityRename` sont paramétrables pour réutiliser
+// cette résolution avec un autre format cible (cf. SHEET_TARGET_NORM_TO_LABEL
+// pour l'export "Feuille") ; par défaut, le format "Combine".
+function resolveColumnMapping(
+  headers,
+  targetNormToLabel = TARGET_NORM_TO_LABEL,
+  identityRename = IDENTITY_RENAME
+) {
   const letterToTargetLabel = {};
   const extraEntries = []; // [srcLetter, originalLabel] dans l'ordre du fichier source
   const letters = Object.keys(headers).sort(
@@ -139,10 +146,10 @@ function resolveColumnMapping(headers) {
     const norm = normalizeLabel(label);
     if (!norm) continue;
 
-    const renamedLabel = IDENTITY_RENAME[norm] || label;
+    const renamedLabel = identityRename[norm] || label;
     const renamedNorm = normalizeLabel(renamedLabel);
-    if (TARGET_NORM_TO_LABEL.has(renamedNorm)) {
-      letterToTargetLabel[letter] = TARGET_NORM_TO_LABEL.get(renamedNorm);
+    if (targetNormToLabel.has(renamedNorm)) {
+      letterToTargetLabel[letter] = targetNormToLabel.get(renamedNorm);
     } else {
       extraEntries.push([letter, toDisplayLabel(label)]);
     }
@@ -725,20 +732,24 @@ function cellRawValue(cell) {
   return cell.v;
 }
 
-export async function readSource(arrayBuffer) {
+// `anchorLabel` est le libellé (normalisé) de la colonne identité utilisée
+// pour repérer les lignes de données réelles (ni vides, ni ligne "TOTAL") :
+// "code bulletin" pour un fichier "Combine", "code feuille" pour un export
+// de type "Feuille".
+export async function readSource(arrayBuffer, anchorLabel = "code bulletin") {
   const wb = XLSX.read(new Uint8Array(arrayBuffer), { type: "array", cellFormula: true });
   const ws = wb.Sheets[wb.SheetNames[0]];
   const range = XLSX.utils.decode_range(ws["!ref"]);
 
   const headers = {};
-  let codeBulletinCol = range.s.c; // repli sur la 1ère colonne si l'en-tête n'est pas retrouvé par nom
+  let anchorCol = range.s.c; // repli sur la 1ère colonne si l'en-tête n'est pas retrouvé par nom
   for (let c = range.s.c; c <= range.e.c; c++) {
     const letter = colLetterFromIndex(c + 1);
     const cell = ws[XLSX.utils.encode_cell({ r: range.s.r, c })];
     if (cell && cell.v !== undefined && cell.v !== null && String(cell.v).trim() !== "") {
       const label = String(cell.v).trim();
       headers[letter] = label;
-      if (normalizeLabel(label) === "code bulletin") codeBulletinCol = c;
+      if (normalizeLabel(label) === anchorLabel) anchorCol = c;
     }
   }
 
@@ -747,10 +758,10 @@ export async function readSource(arrayBuffer) {
     // r = ligne d'en-tête ; rowNumber reste 1-indexé pour rester cohérent
     // avec les coordonnées Excel utilisées ailleurs.
     const rowNumber = r + 1;
-    const aCell = ws[XLSX.utils.encode_cell({ r, c: codeBulletinCol })];
-    const codeBulletin = aCell ? aCell.v : undefined;
-    if (codeBulletin === undefined || codeBulletin === null || codeBulletin === "") continue;
-    if (String(codeBulletin).trim().toUpperCase() === "TOTAL") continue;
+    const aCell = ws[XLSX.utils.encode_cell({ r, c: anchorCol })];
+    const anchorVal = aCell ? aCell.v : undefined;
+    if (anchorVal === undefined || anchorVal === null || anchorVal === "") continue;
+    if (String(anchorVal).trim().toUpperCase() === "TOTAL") continue;
 
     const data = {};
     for (let c = range.s.c; c <= range.e.c; c++) {
@@ -1314,4 +1325,420 @@ export async function generate(sourceArrayBuffer, options) {
     throw new Error("Aucune ligne de bulletin trouvée dans le fichier source.");
   }
   return buildOutput(headers, rows, options);
+}
+
+// ============================================================================
+// 6. Génération à partir d'un export "Feuille" (SheetExcelExport)
+// ============================================================================
+//
+// Une ligne par relevé hebdomadaire (pas de bulletin de paie consolidé) :
+// pas de section Garantie Minimale, pas de "Jour(s) travaillés", pas de
+// Salaire brut/Coût employeur/Salaire net. À la place : "Total somme"
+// (calculée par formule, comme "Salaire brut" côté Combine) et "Total itsi"
+// (recopiée telle quelle depuis le fichier source, total déjà calculé côté
+// production). Pas de "Code contrat" non plus : le regroupement par contrat
+// se fait donc sur "Matricule", qui sert aussi au tri/regroupement par
+// département (même mécanisme et même dictionnaire METIER_TO_DEPT que
+// côté Combine, "Métier" désignant le même référentiel des deux côtés).
+
+const SHEET_IDENTITY_LABELS_LIST = [
+  "Code feuille", "Code RH", "Nom", "Prénom", "Email", "Matricule",
+  "Métier", "Semaine", "Date de début", "Date de fin", "Contrat",
+  "Taux horaire", "Base horaire", "Tournage ou préparation",
+  "Heure(s) équivalence", "Statut",
+];
+const SHEET_IDENTITY_LABELS = new Set(SHEET_IDENTITY_LABELS_LIST);
+
+// Codes du référentiel LoV Remuneration Category d'itsi-production (même
+// référentiel que HOUR_RATE_PAIRS/isNsLabel côté Combine). SheetExcelExport
+// utilise le CODE brut comme libellé de colonne dynamique (pas le libellé
+// court) : chaque code donne une paire "<code> (en h)"/"<code> (en €)".
+const SHEET_REM_CODES = [
+  "Jt", "Hr", "HS125", "HS150", "HS175", "HS200", "HJ25", "HD50", "HD100",
+  "HD200", "HN25", "HN50", "HN100", "HA100", "HA50", "Di100", "Di50",
+  "JF50", "JF100", "JF200", "6e100", "RcDi", "RcF", "Rc6e",
+  "ITrPr", "ITrTg", "ITrPo", "IVgPr", "IVgTg", "IVgPo",
+  "IRpP", "IRpHP", "IRpE", "IRpPr", "IRpPo",
+  "ICaP", "ICaHP", "ICaE", "ICaPr",
+  "ICo", "Eq", "Eq125", "Eq150", "Eq175", "Eq200", "Plf",
+  "PrE", "CG", "CI", "DS", "DNS", "RepCa", "ReS", "ReNS",
+  "IMaS", "IMaNS", "IML", "IVHSS", "Navig", "MOBI", "Trans",
+];
+
+const SHEET_STANDARD_HEADERS = [
+  ...SHEET_IDENTITY_LABELS_LIST,
+  ...SHEET_REM_CODES.flatMap((code) => [`${code} (en h)`, `${code} (en €)`]),
+  "Total somme (en €)",
+  "Total itsi (en €)",
+];
+const SHEET_TARGET_NORM_TO_LABEL = new Map(
+  SHEET_STANDARD_HEADERS.map((l) => [normalizeLabel(l), l])
+);
+// SheetExcelExport::headings() n'ajoute aucun suffixe "(€)" à "Total somme"
+// / "Total itsi" (contrairement aux autres colonnes euros) : ce mapping les
+// rattache à leur nom cible canonique "(en €)" pour un formatage cohérent.
+const SHEET_IDENTITY_RENAME = {
+  "total somme": "Total somme (en €)",
+  "total itsi": "Total itsi (en €)",
+};
+
+// Coefficients "Rate" du référentiel (mêmes id 2-24 / 40-46 que
+// HOUR_RATE_PAIRS côté Combine), ici indexés par code puisque l'export
+// "Feuille" utilise directement le code comme libellé de colonne.
+const SHEET_HOUR_RATE_PAIRS = [
+  ["Hr", 1], ["HS125", 1.25], ["HS150", 1.5], ["HS175", 1.75], ["HS200", 2],
+  ["HJ25", 0.25], ["HD50", 0.5], ["HD100", 1], ["HD200", 2],
+  ["HN25", 0.25], ["HN50", 0.5], ["HN100", 1],
+  ["HA100", 1], ["HA50", 0.5],
+  ["Di100", 1], ["Di50", 0.5],
+  ["JF50", 0.5], ["JF100", 1], ["JF200", 2],
+  ["6e100", 1], ["RcDi", 1], ["RcF", 1], ["Rc6e", 1],
+  ["ICo", 1], ["Eq", -1], ["Eq125", -1.25], ["Eq150", -1.5], ["Eq175", -1.75],
+  ["Eq200", -2], ["Plf", -1],
+];
+const SHEET_HOUR_RATE_COEF = new Map(
+  SHEET_HOUR_RATE_PAIRS.map(([code, rate]) => [`${code} (en €)`, rate])
+);
+
+// Codes "non soumis" du référentiel (DNS/ReNS/IMaNS, même liste que
+// isNsLabel côté Combine) : ici identifiés par code, le libellé court
+// ("Déf. non soumis"…) n'apparaissant pas dans cet export.
+const SHEET_NS_CODES = new Set(["DNS", "ReNS", "IMaNS"]);
+function isSheetNsLabel(label) {
+  return SHEET_NS_CODES.has(label.replace(/ \(en [h€]\)$/, ""));
+}
+
+function sectionForSheetLabel(label) {
+  if (SHEET_IDENTITY_LABELS.has(label)) return "contrat";
+  if (label === "Total somme (en €)" || label === "Total itsi (en €)" || label === NS_TOTAL_LABEL) {
+    return "totaux";
+  }
+  return "paie";
+}
+
+function numFmtForSheetLabel(label) {
+  if (label === NS_TOTAL_LABEL) return FMT_EUROS;
+  if (labelIsEuros(label)) return FMT_EUROS;
+  if (labelIsHours(label)) return FMT_HOURS;
+  return "General";
+}
+
+export async function buildSheetOutput(headers, sourceRows, options) {
+  const { societe, production, objet, idcc } = options;
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("EXPORT FEUILLES", {
+    views: [{ showGridLines: true, state: "frozen", ySplit: 4 }],
+  });
+
+  const { letterToTargetLabel, extraEntries } = resolveColumnMapping(
+    headers,
+    SHEET_TARGET_NORM_TO_LABEL,
+    SHEET_IDENTITY_RENAME
+  );
+  const usedTargetLabels = new Set(Object.values(letterToTargetLabel));
+  const labelToSrcCol = {};
+  for (const [srcCol, label] of Object.entries(letterToTargetLabel)) {
+    labelToSrcCol[label] = srcCol;
+  }
+  const activeStandardLabels = SHEET_STANDARD_HEADERS.filter((l) => usedTargetLabels.has(l));
+  const activePayLabels = activeStandardLabels.filter(
+    (l) => l !== "Total somme (en €)" && l !== "Total itsi (en €)"
+  );
+  const activeTotalLabels = activeStandardLabels.filter(
+    (l) => l === "Total somme (en €)" || l === "Total itsi (en €)"
+  );
+  const hasNsEuroCol = activePayLabels.some((l) => isSheetNsLabel(l) && labelIsEuros(l));
+  const SHEET_NS_TOTAL_SRC = "__SHEET_NS_TOTAL__";
+
+  const columnPlan = [
+    ...activePayLabels.map((label) => ({ label, srcCol: labelToSrcCol[label] })),
+    ...extraEntries.map(([srcCol, label]) => ({ label, srcCol })),
+    ...activeTotalLabels.map((label) => ({ label, srcCol: labelToSrcCol[label] })),
+    ...(hasNsEuroCol ? [{ label: NS_TOTAL_LABEL, srcCol: SHEET_NS_TOTAL_SRC }] : []),
+  ];
+  const nTotalCols = columnPlan.length;
+
+  const targetLetterOf = {};
+  const targetLabelOf = {};
+  const sectionOfIndex = [];
+  const labelOfTargetLetter = {};
+  columnPlan.forEach(({ label, srcCol }, i) => {
+    const idx = i + 1;
+    const letter = colLetterFromIndex(idx);
+    labelOfTargetLetter[letter] = label;
+    sectionOfIndex[idx] = sectionForSheetLabel(label);
+    targetLetterOf[srcCol] = letter;
+    targetLabelOf[srcCol] = label;
+  });
+  const fullColmap = { ...targetLetterOf };
+
+  function shouldSumForSubtotal(label) {
+    return sectionForSheetLabel(label) !== "contrat";
+  }
+
+  const sectionBoundaryCols = [];
+  for (let i = 1; i < nTotalCols; i++) {
+    if (sectionOfIndex[i] !== sectionOfIndex[i + 1]) sectionBoundaryCols.push(i);
+  }
+  const sectionOfLetter = {};
+  for (let i = 1; i <= nTotalCols; i++) {
+    sectionOfLetter[colLetterFromIndex(i)] = sectionOfIndex[i];
+  }
+
+  // Colonnes "(en €)" de la zone paie, à l'exclusion des colonnes "non
+  // soumises" : utilisées pour calculer "Total somme" par formule plutôt
+  // que de recopier la valeur figée du fichier source (même logique que
+  // "Salaire brut" côté Combine). "Total itsi" reste recopiée telle quelle
+  // (total déjà calculé côté production, non redéfini ici).
+  const sheetSumCols = columnPlan
+    .filter(({ label }) => sectionForSheetLabel(label) === "paie" && labelIsEuros(label) && !isSheetNsLabel(label))
+    .map(({ srcCol }) => targetLetterOf[srcCol]);
+  const sheetNsSumCols = columnPlan
+    .filter(({ label }) => sectionForSheetLabel(label) === "paie" && labelIsEuros(label) && isSheetNsLabel(label))
+    .map(({ srcCol }) => targetLetterOf[srcCol]);
+
+  const srcLetterForTargetLabel = (targetLabel) =>
+    Object.keys(letterToTargetLabel).find((l) => letterToTargetLabel[l] === targetLabel);
+  const metierCol = srcLetterForTargetLabel("Métier");
+  const debutCol = srcLetterForTargetLabel("Date de début");
+  const finCol = srcLetterForTargetLabel("Date de fin");
+  const matriculeCol = srcLetterForTargetLabel("Matricule");
+
+  const tauxCol = labelToSrcCol["Taux horaire"]
+    ? targetLetterOf[labelToSrcCol["Taux horaire"]]
+    : null;
+  const hourColOfEuroLabel = {};
+  for (const eurosLabel of SHEET_HOUR_RATE_COEF.keys()) {
+    const hoursLabel = eurosLabel.replace(/\(en €\)$/, "(en h)");
+    const hSrcCol = labelToSrcCol[hoursLabel];
+    if (hSrcCol && targetLetterOf[hSrcCol]) {
+      hourColOfEuroLabel[eurosLabel] = targetLetterOf[hSrcCol];
+    }
+  }
+
+  // -- bandeau d'en-tête (lignes 1-3) --------------------------------
+  ws.getCell("F1").value = "Société"; ws.getCell("F1").font = FONT_LABEL_BOLD;
+  ws.getCell("G1").value = "Production"; ws.getCell("G1").font = FONT_LABEL_BOLD;
+  ws.getCell("H1").value = "N° objet"; ws.getCell("H1").font = FONT_LABEL_BOLD;
+  ws.getCell("J1").value = "IDCC"; ws.getCell("J1").font = FONT_LABEL_BOLD;
+
+  ws.getCell("A2").value = "Période exportée";
+  ws.getCell("F2").value = societe;
+  ws.getCell("G2").value = production;
+  ws.getCell("H2").value = objet;
+  ws.getCell("J2").value = idcc;
+
+  const debuts = debutCol
+    ? sourceRows.map((r) => parseDate(r.data[debutCol])).filter((d) => d instanceof Date)
+    : [];
+  const fins = finCol
+    ? sourceRows.map((r) => parseDate(r.data[finCol])).filter((d) => d instanceof Date)
+    : [];
+  if (debuts.length && fins.length) {
+    const dmin = new Date(Math.min(...debuts));
+    const dmax = new Date(Math.max(...fins));
+    const fmt = (d) =>
+      `${String(d.getUTCDate()).padStart(2, "0")}/${String(d.getUTCMonth() + 1).padStart(2, "0")}/${d.getUTCFullYear()}`;
+    ws.getCell("A3").value = `du ${fmt(dmin)} au ${fmt(dmax)}`;
+  } else {
+    ws.getCell("A3").value = "du ... au ...";
+  }
+
+  // -- ligne d'entête des colonnes (ligne 4) --------------------------
+  const headerRow = 4;
+  columnPlan.forEach(({ label }, i) => {
+    const idx = i + 1;
+    const cell = ws.getCell(headerRow, idx);
+    cell.value = label;
+    cell.font = FONT_LABEL_BOLD;
+    cell.alignment = { ...CENTER, wrapText: true };
+    cell.fill = SECTION_HEADER_FILL[sectionOfIndex[idx]];
+    cell.border = { bottom: HEADER_BOTTOM_BORDER };
+    ws.getColumn(idx).width = widthForLabel(label);
+  });
+  ws.getRow(headerRow).height = HEADER_ROW_HEIGHT;
+
+  // -- regroupement par département, puis par matricule (pas de code
+  // contrat dans cet export) -------------------------------------------
+  const byDept = {};
+  const unclassified = new Set();
+  const sortedForGrouping = matriculeCol
+    ? [...sourceRows].sort((a, b) => compareMatricules(a.data[matriculeCol], b.data[matriculeCol]))
+    : sourceRows;
+  for (const { srcRow, data } of sortedForGrouping) {
+    const metier = metierCol ? data[metierCol] : undefined;
+    const { dept, recognized } = classifyMetier(metier);
+    if (!recognized) unclassified.add(metier);
+    if (!byDept[dept]) byDept[dept] = [];
+    byDept[dept].push({ srcRow, data });
+  }
+
+  const warnings = [];
+  const frozenStats = new Map();
+  let currentRow = headerRow + 2;
+  const subtotalRefs = {};
+
+  for (const dept of Object.keys(byDept)) {
+    const entries = byDept[dept];
+    if (!entries || entries.length === 0) continue;
+
+    const deptHeaderRow = currentRow;
+    const deptCell = ws.getCell(deptHeaderRow, 1);
+    deptCell.value = dept;
+    for (let c = 1; c <= nTotalCols; c++) {
+      ws.getCell(deptHeaderRow, c).fill = FILL_DEPT;
+    }
+    deptCell.font = FONT_DEPT;
+    currentRow += 1;
+
+    // Regroupe les lignes consécutives partageant le même matricule (pas de
+    // code contrat dans cet export : le matricule identifie le poste/contrat).
+    const contractGroups = [];
+    for (const entry of entries) {
+      const code = matriculeCol ? entry.data[matriculeCol] : undefined;
+      const hasCode = code !== undefined && code !== null && code !== "";
+      const last = contractGroups[contractGroups.length - 1];
+      if (last && hasCode && last.code === code) {
+        last.rows.push(entry);
+      } else {
+        contractGroups.push({ code: hasCode ? code : null, rows: [entry] });
+      }
+    }
+
+    const deptRefRows = {};
+
+    for (const group of contractGroups) {
+      const groupFirstRow = currentRow;
+      const colsWithAmounts = new Set();
+
+      for (const { srcRow, data } of group.rows) {
+        const targetRow = currentRow;
+        for (const [srcCol, tgtCol] of Object.entries(targetLetterOf)) {
+          const val = data[srcCol];
+          const label = targetLabelOf[srcCol];
+          const tgtIdx = colIndexFromLetter(tgtCol);
+          const outCell = ws.getCell(targetRow, tgtIdx);
+          const rateCoef = SHEET_HOUR_RATE_COEF.get(label);
+          const rateHourCol = rateCoef !== undefined ? hourColOfEuroLabel[label] : undefined;
+          const useRateFormula = rateCoef !== undefined && tauxCol && rateHourCol;
+          if (useRateFormula) {
+            // Calculée (taux horaire x coefficient x heures), pas
+            // recopiée/traduite depuis le fichier source : reste vivante si
+            // le taux horaire ou les heures sont modifiés.
+            outCell.value = { formula: `${tauxCol}${targetRow}*${rateCoef}*${rateHourCol}${targetRow}` };
+            outCell.numFmt = FMT_EUROS;
+          } else if (label === "Total somme (en €)" && sheetSumCols.length) {
+            outCell.value = {
+              formula: `SUM(${sheetSumCols.map((c) => `${c}${targetRow}`).join(",")})`,
+            };
+            outCell.numFmt = FMT_EUROS;
+          } else if (label === NS_TOTAL_LABEL && sheetNsSumCols.length) {
+            outCell.value = {
+              formula: `SUM(${sheetNsSumCols.map((c) => `${c}${targetRow}`).join(",")})`,
+            };
+            outCell.numFmt = FMT_EUROS;
+          } else {
+            writeValue(outCell, val, label, srcCol, tgtCol, srcRow, targetRow, fullColmap, frozenStats);
+          }
+          outCell.fill = SECTION_DATA_FILL[sectionOfLetter[tgtCol]];
+          const hasVal =
+            useRateFormula ||
+            (label === "Total somme (en €)" && sheetSumCols.length) ||
+            (label === NS_TOTAL_LABEL && sheetNsSumCols.length) ||
+            (val !== null && val !== undefined && val !== "");
+          if (shouldSumForSubtotal(label) && hasVal) colsWithAmounts.add(tgtCol);
+        }
+        currentRow += 1;
+      }
+
+      const groupLastRow = currentRow - 1;
+      const sortedGroupCols = [...colsWithAmounts].sort(
+        (a, b) => colIndexFromLetter(a) - colIndexFromLetter(b)
+      );
+
+      if (group.code) {
+        const contractSubtotalRow = currentRow;
+        ws.getCell(contractSubtotalRow, 1).value = `SOUS-TOTAL ${group.code}`;
+        for (let c = 1; c <= nTotalCols; c++) {
+          ws.getCell(contractSubtotalRow, c).fill = FILL_CONTRACT;
+        }
+        ws.getCell(contractSubtotalRow, 1).font = FONT_CONTRACT;
+
+        for (const tgtCol of sortedGroupCols) {
+          const idx = colIndexFromLetter(tgtCol);
+          const c = ws.getCell(contractSubtotalRow, idx);
+          c.value = { formula: `SUM(${tgtCol}${groupFirstRow}:${tgtCol}${groupLastRow})` };
+          c.fill = FILL_CONTRACT;
+          c.numFmt = numFmtForSheetLabel(labelOfTargetLetter[tgtCol]);
+          (deptRefRows[tgtCol] ||= []).push(contractSubtotalRow);
+        }
+        currentRow += 1;
+      } else {
+        for (const tgtCol of sortedGroupCols) {
+          (deptRefRows[tgtCol] ||= []).push(groupFirstRow);
+        }
+      }
+    }
+
+    const deptSubtotalRow = currentRow;
+    ws.getCell(deptSubtotalRow, 1).value = `SOUS-TOTAL ${dept}`;
+    for (let c = 1; c <= nTotalCols; c++) {
+      ws.getCell(deptSubtotalRow, c).fill = FILL_DEPT;
+    }
+    ws.getCell(deptSubtotalRow, 1).font = FONT_DEPT;
+
+    const sortedDeptCols = Object.keys(deptRefRows).sort(
+      (a, b) => colIndexFromLetter(a) - colIndexFromLetter(b)
+    );
+    for (const tgtCol of sortedDeptCols) {
+      const idx = colIndexFromLetter(tgtCol);
+      const refs = deptRefRows[tgtCol].map((r) => `${tgtCol}${r}`).join(",");
+      const c = ws.getCell(deptSubtotalRow, idx);
+      c.value = { formula: `SUM(${refs})` };
+      c.fill = FILL_DEPT;
+      c.numFmt = numFmtForSheetLabel(labelOfTargetLetter[tgtCol]);
+      (subtotalRefs[tgtCol] ||= []).push(deptSubtotalRow);
+    }
+
+    currentRow = deptSubtotalRow + 2;
+  }
+
+  for (const [label, count] of frozenStats) {
+    warnings.push(
+      `${label} : ${count} valeur(s) figée(s) au lieu d'une formule vivante ` +
+      `(référence à une ligne "TOTAL" absente du nouveau format).`
+    );
+  }
+
+  const totalRow = currentRow;
+  const totalLabelCell = ws.getCell(totalRow, 1);
+  totalLabelCell.value = "TOTAL GÉNÉRAL";
+  totalLabelCell.font = FONT_LABEL_BOLD;
+  for (const [tgtCol, rowsArr] of Object.entries(subtotalRefs)) {
+    const idx = colIndexFromLetter(tgtCol);
+    const refs = rowsArr.map((r) => `${tgtCol}${r}`).join(",");
+    const c = ws.getCell(totalRow, idx);
+    c.value = { formula: `SUM(${refs})` };
+    c.font = FONT_LABEL_BOLD;
+    c.numFmt = numFmtForSheetLabel(labelOfTargetLetter[tgtCol]);
+  }
+
+  for (const boundaryCol of sectionBoundaryCols) {
+    for (let r = headerRow; r <= totalRow; r++) {
+      const cell = ws.getCell(r, boundaryCol);
+      cell.border = { ...cell.border, right: SECTION_BORDER };
+    }
+  }
+
+  const buffer = await wb.xlsx.writeBuffer();
+  return { buffer, warnings, unclassified: [...unclassified].filter(Boolean) };
+}
+
+export async function generateSheet(sourceArrayBuffer, options) {
+  const { headers, rows } = await readSource(sourceArrayBuffer, "code feuille");
+  if (rows.length === 0) {
+    throw new Error("Aucune ligne de feuille trouvée dans le fichier source.");
+  }
+  return buildSheetOutput(headers, rows, options);
 }

@@ -1,20 +1,56 @@
 # Générateur export bulletin ITSI
 
-Application web (100 % client, sans serveur) qui reformate un fichier
-« Combine » (export de bulletins de paie, ex. Marie-Christine) au format
-export bulletin standard : regroupement par département de tournage, mise
-en page identique au modèle, et **formules de calcul conservées** (le
-fichier généré reste un outil de travail modifiable — changer un nombre
-d'heures recalcule automatiquement le montant en euros).
+Application web (100 % client, sans serveur) qui reformate un export excel
+extrait d'itsi-production au format bulletin/feuille standard : regroupement
+par département de tournage, mise en page identique au modèle, et
+**formules de calcul conservées** (le fichier généré reste un outil de
+travail modifiable — changer un nombre d'heures ou un taux horaire recalcule
+automatiquement le montant en euros).
 
 Tout se passe dans le navigateur : le fichier déposé n'est jamais envoyé à
 un serveur.
 
 ## Utilisation
 
-Ouvrir la page, déposer un fichier `.xlsx` (glisser-déposer ou bouton
-« Choisir un fichier »), ajuster si besoin les champs Société / Production /
-N° objet / IDCC, puis télécharger le fichier généré.
+Ouvrir la page, choisir le **type de fichier** déposé (« Combine » pour un
+export de bulletins de paie, ex. Marie-Christine, ou « Feuille » pour un
+export de relevés d'heures — cf. `Deux types de fichiers source` plus bas),
+déposer le fichier `.xlsx` (glisser-déposer ou bouton « Choisir un
+fichier »), ajuster si besoin les champs Société / Production / N° objet /
+IDCC, puis télécharger le fichier généré.
+
+## Deux types de fichiers source
+
+Le sélecteur « Type de fichier » choisit entre deux générateurs, qui
+partagent l'essentiel de leur logique (`src/generator.js`) mais ciblent des
+formats source différents :
+
+- **Combine** (`generate()` / `buildOutput()`) : export de bulletins de
+  paie consolidés (une ligne par bulletin), regroupement par contrat (code
+  contrat). Section Garantie Minimale, "Jours travaillés (dates)"/"Jour(s)
+  travaillés", "Salaire brut" (remplace "Total somme"), "Coût employeur",
+  "Salaire net imposable/net".
+- **Feuille** (`generateSheet()` / `buildSheetOutput()`) : export de
+  relevés d'heures hebdomadaires (`SheetExcelExport` côté production, une
+  ligne par relevé/semaine), regroupement par **matricule** (pas de code
+  contrat dans cet export). Pas de section Garantie Minimale ni de "Jour(s)
+  travaillés" ; à la place, "Total somme" (calculée, même rôle que "Salaire
+  brut" côté Combine) et "Total itsi" (recopiée telle quelle depuis le
+  fichier source, total déjà calculé côté production).
+
+Les deux partagent : la résolution de colonnes par nom (`resolveColumnMapping()`,
+paramétrable par format cible), le classement des métiers par département
+(`METIER_TO_DEPT`/`classifyMetier()` — même référentiel des deux côtés,
+"Métier" désignant le même champ), le tri par matricule
+(`compareMatricules()`), les sections de couleur, les sous-totaux, et le
+calcul "taux horaire x coefficient x heures" pour les variables concernées
+(cf. `Colonnes calculées` plus bas — indexé par libellé court côté Combine,
+par code brut côté Feuille, `SHEET_HOUR_RATE_COEF`).
+
+Le générateur "Feuille" a été construit uniquement à partir des colonnes
+définies dans `SheetExcelExport::headings()`/`format()` (fourni en
+conversation), **sans fichier d'export réel pour validation** — à tester
+sur un vrai fichier avant usage en production.
 
 ## Développement
 

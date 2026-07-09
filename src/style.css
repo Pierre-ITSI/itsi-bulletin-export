@@ -106,6 +106,17 @@ h1 {
   font-size: 0.95rem;
 }
 
+.radio-label {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.5rem !important;
+}
+
+.radio-label input {
+  width: auto;
+  padding: 0;
+}
+
 .status {
   margin-top: 1.5rem;
   padding: 0.7rem 1rem;
