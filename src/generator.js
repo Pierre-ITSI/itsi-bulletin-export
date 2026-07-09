@@ -811,6 +811,32 @@ const MG_LABEL_PATTERNS = [
   /^total base\b/, /^mg\b/, /^ratio mg\b/, /^supp .*ap\.? mg/,
 ];
 
+// Coefficients "Rate" du référentiel LoV Remuneration Category
+// d'itsi-production (id 2 à 24, puis 40 à 46 — les variables réellement
+// calculées "taux horaire x coefficient x heures", à l'exclusion des
+// indemnités à montant libre). Pour chacune, la colonne "(en €)" est
+// calculée par formule à partir de "Taux horaire" et de la colonne
+// "(en h)" correspondante, plutôt que recopiée/traduite depuis le fichier
+// source (qui fige le taux horaire en valeur littérale dans sa formule et
+// ne recalcule donc pas si l'utilisateur modifie le taux horaire).
+const HOUR_RATE_PAIRS = [
+  ["H. normales", 1], ["H. supp. 125%", 1.25], ["H. supp. 150%", 1.5],
+  ["H. supp. 175%", 1.75], ["H. supp. 200%", 2], ["Majo. jour 25%", 0.25],
+  ["Majo. jour 50%", 0.5], ["Majo. jour 100%", 1], ["Majo. jour 200%", 2],
+  ["Majo. nuit 25%", 0.25], ["Majo. nuit 50%", 0.5], ["Majo. nuit 100%", 1],
+  ["H. anticipées 100%", 1], ["H. anticipées 50%", 0.5],
+  ["Majo. dimanche 100%", 1], ["Majo. dimanche 50%", 0.5],
+  ["Majo. férié 50%", 0.5], ["Majo. férié 100%", 1], ["Majo. férié 200%", 2],
+  ["Majo. 6ème jour 100%", 1], ["Récup. dimanche", 1], ["Récup. férié", 1],
+  ["Récup. 6ème jour", 1], ["Indem. continue", 1],
+  ["Retrait équivalence", -1], ["Retrait equi - H. supp. 125%", -1.25],
+  ["Retrait equi - H. supp. 150%", -1.5], ["Retrait equi - H. supp. 175%", -1.75],
+  ["Retrait equi - H. supp. 200%", -2], ["Retrait plafond majo.", -1],
+];
+const HOUR_RATE_COEF = new Map(
+  HOUR_RATE_PAIRS.map(([base, rate]) => [`${base} (en €)`, rate])
+);
+
 const SECTION_HEADER_FILL = {
   contrat: { type: "pattern", pattern: "solid", fgColor: { argb: "FFD3E5F7" } }, // bleu pastel
   paie: { type: "pattern", pattern: "solid", fgColor: { argb: "FFD6F0DB" } }, // vert pastel
@@ -1026,6 +1052,22 @@ export async function buildOutput(headers, sourceRows, options) {
   const contratCol = srcLetterForTargetLabel("Code contrat (itsi)");
   const matriculeCol = srcLetterForTargetLabel("Matricule salarié production (itsi)");
 
+  // Colonne cible "Taux horaire", et pour chaque libellé "(en €)" de
+  // HOUR_RATE_COEF, colonne cible de son "(en h)" jumeau — seulement si les
+  // deux sont réellement présentes dans le fichier déposé (cf. useRateFormula
+  // dans la boucle d'écriture des lignes).
+  const tauxCol = labelToSrcCol["Taux horaire"]
+    ? targetLetterOf[labelToSrcCol["Taux horaire"]]
+    : null;
+  const hourColOfEuroLabel = {};
+  for (const eurosLabel of HOUR_RATE_COEF.keys()) {
+    const hoursLabel = eurosLabel.replace(/\(en €\)$/, "(en h)");
+    const hSrcCol = labelToSrcCol[hoursLabel];
+    if (hSrcCol && targetLetterOf[hSrcCol]) {
+      hourColOfEuroLabel[eurosLabel] = targetLetterOf[hSrcCol];
+    }
+  }
+
   // -- bandeau d'en-tête (lignes 1-3) --------------------------------
   ws.getCell("F1").value = "Société"; ws.getCell("F1").font = FONT_LABEL_BOLD;
   ws.getCell("G1").value = "Production"; ws.getCell("G1").font = FONT_LABEL_BOLD;
@@ -1136,7 +1178,18 @@ export async function buildOutput(headers, sourceRows, options) {
           const label = targetLabelOf[srcCol];
           const tgtIdx = colIndexFromLetter(tgtCol);
           const outCell = ws.getCell(targetRow, tgtIdx);
-          if (label === "Salaire brut (en €)" && brutSumCols.length) {
+          const rateCoef = HOUR_RATE_COEF.get(label);
+          const rateHourCol = rateCoef !== undefined ? hourColOfEuroLabel[label] : undefined;
+          const useRateFormula = rateCoef !== undefined && tauxCol && rateHourCol;
+          if (useRateFormula) {
+            // Calculée (taux horaire x coefficient x heures, cf.
+            // HOUR_RATE_COEF), pas recopiée/traduite depuis le fichier
+            // source : la formule reste vivante si le taux horaire ou les
+            // heures sont modifiés, contrairement à la formule d'origine qui
+            // fige le taux horaire en valeur littérale.
+            outCell.value = { formula: `${tauxCol}${targetRow}*${rateCoef}*${rateHourCol}${targetRow}` };
+            outCell.numFmt = FMT_EUROS;
+          } else if (label === "Salaire brut (en €)" && brutSumCols.length) {
             // Calculé (somme des colonnes "paie" en €, hors "(NS)"), pas
             // recopié depuis la valeur figée du fichier source : la formule
             // reste vivante si l'utilisateur modifie des heures.
@@ -1156,6 +1209,7 @@ export async function buildOutput(headers, sourceRows, options) {
           }
           outCell.fill = SECTION_DATA_FILL[sectionOfLetter[tgtCol]];
           const hasVal =
+            useRateFormula ||
             (label === "Salaire brut (en €)" && brutSumCols.length) ||
             (label === NS_TOTAL_LABEL && nsSumCols.length) ||
             (val !== null && val !== undefined && val !== "");

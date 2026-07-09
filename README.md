@@ -112,6 +112,23 @@ et "Jour(s) travaillés" qui garde le nombre de jours (`countJours()`,
 La colonne "dates" n'est jamais sommée (texte, pas nombre) : elle reste
 vide sur les lignes de sous-total.
 
+## Colonnes calculées "taux horaire x coefficient x heures"
+
+Pour les variables de paie du référentiel LoV `Remuneration Category`
+d'itsi-production dont le montant est un pur produit heures x taux x
+coefficient (id 2 à 24, puis 40 à 46 — ex. "H. normales", "H. supp. 125%",
+"Majo. jour 25%", "Retrait plafond majo."…), la colonne "(en €)" est
+**calculée** par formule `Taux horaire x coefficient x colonne (en h)`
+plutôt que recopiée/traduite depuis le fichier source. Le fichier source
+fige en effet le taux horaire en valeur littérale directement dans sa
+formule (ex. `=68.0408999*N2`) : modifier le taux horaire dans le fichier
+généré n'y recalculait donc rien. La formule vivante corrige ce point pour
+ces colonnes (`HOUR_RATE_COEF` dans `src/generator.js`).
+
+Les indemnités à montant libre (transport, repas, cachets, défraiements…)
+ne sont pas concernées et gardent leur comportement précédent (valeur ou
+formule traduite depuis le fichier source).
+
 ## Mise en forme et ordre des colonnes
 
 Les colonnes sont regroupées en 4 zones pastel, séparées par une bordure
