@@ -52,10 +52,13 @@ mapping se fait dans `resolveColumnMapping()` (`src/generator.js`) :
   employé, Matricule).
 - **Toute colonne source restante**, sans équivalent dans le format cible
   (ex. Cachet grp./iso., Indem. Matériel, Indem. VHSS, ou les anciennes
-  colonnes de travail Total base/MG/Ratio MG/Supp ap. MG/Total somme), est
-  ajoutée automatiquement en fin de tableau pour ne perdre aucune donnée —
-  la liste de ces colonnes "extra" varie donc d'un fichier à l'autre. Aucune
-  colonne du fichier déposé n'est jamais silencieusement supprimée.
+  colonnes de travail Total base/MG/Ratio MG/Supp ap. MG), est ajoutée
+  automatiquement en fin de tableau pour ne perdre aucune donnée — la liste
+  de ces colonnes "extra" varie donc d'un fichier à l'autre.
+- **Exception** : la colonne "Total somme" n'est **pas** reprise dans
+  l'export — "Salaire brut" (calculée, voir plus bas) la remplace. C'est la
+  seule colonne du fichier déposé qui n'apparaît jamais dans le tableau de
+  sortie.
 
 Le classement des métiers par département (`METIER_TO_DEPT`, `src/generator.js`)
 est extrait directement des référentiels LoV `Job` / `Department` de la base
@@ -124,13 +127,20 @@ l'ordre des colonnes suit ce même regroupement, pas seulement leur couleur :
 3. **Garantie Minimale** (rose) : les anciennes colonnes de travail Total
    base/MG/Ratio MG/Supp ap. MG, juste avant les totaux.
 4. **Totaux bruts** (violet), **toujours en toutes dernières colonnes** :
-   "Total somme", Coût employeur, Salaire brut, Salaire net imposable,
-   Salaire net.
+   Coût employeur, Salaire brut, Salaire net imposable, Salaire net, puis
+   "Total indemnité (NS)" si le fichier déposé contient au moins une colonne
+   "(NS)" (ex. Indem. Matériel (NS)) — sinon cette dernière colonne
+   n'apparaît pas.
 
-`Salaire brut (en €)` est **calculée** (formule SOMME de toutes les
-colonnes euros de la zone "variables de paie" de la ligne), et non recopiée
-depuis le fichier source : modifier un nombre d'heures recalcule aussi le
-salaire brut, comme le reste de l'outil.
+`Salaire brut (en €)` est **calculée** (formule SOMME de toutes les colonnes
+euros de la zone "variables de paie" de la ligne, **à l'exclusion des
+colonnes "(NS)"**), et non recopiée depuis le fichier source : modifier un
+nombre d'heures recalcule aussi le salaire brut, comme le reste de l'outil.
+Elle remplace "Total somme", qui n'est plus reprise dans l'export.
+
+`Total indemnité (NS)` est également **calculée** : formule SOMME de
+l'ensemble des colonnes "(NS)" en euros de la ligne (`isNsLabel()` /
+`nsSumCols` dans `src/generator.js`), tenues à part de "Salaire brut".
 
 Les 4 premières lignes (bandeau + en-têtes) sont figées pour rester visibles
 au défilement.

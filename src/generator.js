@@ -790,18 +790,23 @@ const IDENTITY_LABELS = new Set([
   "Prénom", "Abattement", "Métier", "Date de début", "Date de fin",
   "Taux horaire",
 ]);
+// Libellé de la colonne calculée "Total indemnité (NS)" (somme des colonnes
+// "(NS)" euros, cf. isNsLabel) : constante partagée entre la construction du
+// plan de colonnes et l'écriture des lignes.
+const NS_TOTAL_LABEL = "Total indemnité (NS)";
 const GROSS_TOTAL_LABELS = new Set([
   "Coût employeur (en h)", "Coût employeur (en €)",
   "Salaire brut (en h)", "Salaire brut (en €)",
   "Salaire net imposable (en h)", "Salaire net imposable (en €)",
   "Salaire net (en h)", "Salaire net (en €)",
+  NS_TOTAL_LABEL,
 ]);
 // Anciennes colonnes de travail "Garantie Minimale" du fichier source
 // (Total base, MG, Ratio MG, Supp ap. MG) : reconnues par motif car elles
 // n'ont pas de libellé cible standard (ce sont toujours des colonnes
-// "extra"). "Total somme" en fait aussi partie à l'origine, mais rejoint la
-// zone violette (cf. isTotalSommeLabel) : elle est placée juste avant les
-// totaux bruts plutôt qu'avec le reste des colonnes de travail.
+// "extra"). "Total somme" en fait aussi partie à l'origine, mais n'est plus
+// reprise dans l'export : "Salaire brut" (calculée) la remplace (cf.
+// isTotalSommeLabel, encore utilisée pour l'exclure des colonnes "extra").
 const MG_LABEL_PATTERNS = [
   /^total base\b/, /^mg\b/, /^ratio mg\b/, /^supp .*ap\.? mg/,
 ];
@@ -828,6 +833,12 @@ function isMgLabel(label) {
 
 function isTotalSommeLabel(label) {
   return /^total somme\b/.test(normalizeLabel(label));
+}
+
+// Colonnes "(NS)" (non soumis) : ex. "Indem. Matériel (NS)". Exclues de la
+// somme "Salaire brut" et regroupées à part dans "Total indemnité (NS)".
+function isNsLabel(label) {
+  return /\(ns\)/i.test(label);
 }
 
 function sectionForLabel(label) {
@@ -900,18 +911,26 @@ export async function buildOutput(headers, sourceRows, options) {
   const activePayLabels = activeStandardLabels.filter((l) => !GROSS_TOTAL_LABELS.has(l));
   const activeTotalLabels = activeStandardLabels.filter((l) => GROSS_TOTAL_LABELS.has(l));
   const extrasMg = extraEntries.filter(([, label]) => isMgLabel(label));
-  const extrasTotalSomme = extraEntries.filter(([, label]) => isTotalSommeLabel(label));
+  // "Total somme" n'est plus reprise dans l'export : "Salaire brut"
+  // (calculée) la remplace. On l'exclut simplement des colonnes "extra".
   const extrasOther = extraEntries.filter(
     ([, label]) => !isMgLabel(label) && !isTotalSommeLabel(label)
   );
+  // Colonnes "(NS)" en euros présentes dans le fichier déposé : condition la
+  // présence de la colonne calculée "Total indemnité (NS)" en toute fin de
+  // tableau (pas de colonne "au cas où" si le fichier n'en a aucune).
+  const hasNsEuroCol = extraEntries.some(
+    ([, label]) => isNsLabel(label) && labelIsEuros(label)
+  );
+  const NS_TOTAL_SRC = "__NS_TOTAL__"; // clé "source" synthétique (aucune colonne du fichier déposé)
 
   // Ordre final des colonnes : infos contrat + variables de paie standard
   // (dans l'ordre du format cible, "Jour(s) travaillés" y compris — précédée
   // d'une colonne dérivée listant les dates travaillées, cf. plus bas), puis
   // les colonnes sans équivalent standard (Cachet, Déf., Indem.…), puis les
-  // anciennes colonnes de travail Garantie Minimale, puis "Total somme"
-  // juste avant les totaux bruts (Coût employeur, Salaire brut, Salaire net
-  // imposable, Salaire net), tout à la fin du tableau.
+  // anciennes colonnes de travail Garantie Minimale, puis les totaux bruts
+  // (Coût employeur, Salaire brut, Salaire net imposable, Salaire net), puis
+  // "Total indemnité (NS)" (calculée) en toute dernière colonne.
   const activePayEntries = [];
   for (const label of activePayLabels) {
     if (label === "Jour(s) travaillés" && labelToSrcCol[label]) {
@@ -930,8 +949,8 @@ export async function buildOutput(headers, sourceRows, options) {
     ...activePayEntries,
     ...extrasOther.map(([srcCol, label]) => ({ label, srcCol })),
     ...extrasMg.map(([srcCol, label]) => ({ label, srcCol })),
-    ...extrasTotalSomme.map(([srcCol, label]) => ({ label, srcCol })),
     ...activeTotalLabels.map((label) => ({ label, srcCol: labelToSrcCol[label] })),
+    ...(hasNsEuroCol ? [{ label: NS_TOTAL_LABEL, srcCol: NS_TOTAL_SRC }] : []),
   ];
   const nTotalCols = columnPlan.length;
 
@@ -968,6 +987,7 @@ export async function buildOutput(headers, sourceRows, options) {
     return sectionForLabel(label) !== "contrat";
   }
   function numFmtForLabel(label) {
+    if (label === NS_TOTAL_LABEL) return FMT_EUROS;
     if (labelIsEuros(label)) return FMT_EUROS;
     if (labelIsHours(label)) return FMT_HOURS;
     return "0"; // Jour(s) travaillés
@@ -983,10 +1003,17 @@ export async function buildOutput(headers, sourceRows, options) {
   }
 
   // Colonnes "(en €)" de la zone paie (variables de paie standard + extras
-  // hors Garantie Minimale) : utilisées pour calculer "Salaire brut" par
-  // formule plutôt que de recopier la valeur figée du fichier source.
+  // hors Garantie Minimale), à l'exclusion des colonnes "(NS)" (cf.
+  // nsSumCols) : utilisées pour calculer "Salaire brut" par formule plutôt
+  // que de recopier la valeur figée du fichier source.
   const brutSumCols = columnPlan
-    .filter(({ label }) => sectionForLabel(label) === "paie" && labelIsEuros(label))
+    .filter(({ label }) => sectionForLabel(label) === "paie" && labelIsEuros(label) && !isNsLabel(label))
+    .map(({ srcCol }) => targetLetterOf[srcCol]);
+
+  // Colonnes "(NS)" en euros de la zone paie : sommées séparément dans
+  // "Total indemnité (NS)" plutôt que dans "Salaire brut".
+  const nsSumCols = columnPlan
+    .filter(({ label }) => sectionForLabel(label) === "paie" && labelIsEuros(label) && isNsLabel(label))
     .map(({ srcCol }) => targetLetterOf[srcCol]);
 
   // lettre source qui alimente un libellé cible donné (pour Métier, dates…)
@@ -1109,11 +1136,18 @@ export async function buildOutput(headers, sourceRows, options) {
           const tgtIdx = colIndexFromLetter(tgtCol);
           const outCell = ws.getCell(targetRow, tgtIdx);
           if (label === "Salaire brut (en €)" && brutSumCols.length) {
-            // Calculé (somme des colonnes "paie" en €), pas recopié
-            // depuis la valeur figée du fichier source : la formule reste
-            // vivante si l'utilisateur modifie des heures.
+            // Calculé (somme des colonnes "paie" en €, hors "(NS)"), pas
+            // recopié depuis la valeur figée du fichier source : la formule
+            // reste vivante si l'utilisateur modifie des heures.
             outCell.value = {
               formula: `SUM(${brutSumCols.map((c) => `${c}${targetRow}`).join(",")})`,
+            };
+            outCell.numFmt = FMT_EUROS;
+          } else if (label === NS_TOTAL_LABEL && nsSumCols.length) {
+            // Colonne calculée : somme des colonnes "(NS)" en euros, sans
+            // équivalent dans le fichier source (pas de srcCol réel).
+            outCell.value = {
+              formula: `SUM(${nsSumCols.map((c) => `${c}${targetRow}`).join(",")})`,
             };
             outCell.numFmt = FMT_EUROS;
           } else {
@@ -1122,6 +1156,7 @@ export async function buildOutput(headers, sourceRows, options) {
           outCell.fill = SECTION_DATA_FILL[sectionOfLetter[tgtCol]];
           const hasVal =
             (label === "Salaire brut (en €)" && brutSumCols.length) ||
+            (label === NS_TOTAL_LABEL && nsSumCols.length) ||
             (val !== null && val !== undefined && val !== "");
           if (shouldSumForSubtotal(label) && hasVal) colsWithAmounts.add(tgtCol);
         }
