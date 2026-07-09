@@ -110,7 +110,7 @@ async function handleFile(file) {
       const notes = [];
       if (unclassified.length) {
         notes.push(
-          `Métiers non reconnus (classés en "AUTRES") : ${unclassified.join(", ")}`
+          `Métiers non reconnus (classés en "Autres") : ${unclassified.join(", ")}`
         );
       }
       if (warnings.length) {

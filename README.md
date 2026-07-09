@@ -57,10 +57,15 @@ mapping se fait dans `resolveColumnMapping()` (`src/generator.js`) :
   la liste de ces colonnes "extra" varie donc d'un fichier à l'autre. Aucune
   colonne du fichier déposé n'est jamais silencieusement supprimée.
 
-Le classement des métiers par département (`METIER_TO_DEPT`) reste, lui,
-une liste explicite à compléter si de nouveaux intitulés de poste
-apparaissent ; un métier non reconnu est classé dans "AUTRES" et signalé à
-l'utilisateur dans l'interface plutôt que de faire échouer la génération.
+Le classement des métiers par département (`METIER_TO_DEPT`, `src/generator.js`)
+est extrait directement des référentiels LoV `Job` / `Department` de la base
+de données itsi-production (382 intitulés de poste → 23 départements), avec
+les mêmes noms de département que ceux utilisés côté API/back-office (ex.
+"Réalisation - Mise en scène / ADS", "Régie / PA (Locations-Unit-LO-Transport)",
+"Autres"…). Un métier absent de cette table est classé dans "Autres" et
+signalé à l'utilisateur dans l'interface plutôt que de faire échouer la
+génération ; à distinguer d'un métier valide déjà rattaché à "Autres" dans le
+référentiel (ex. stagiaire, documentaliste), qui n'est pas signalé.
 
 **Ordre des départements** : les salariés sont triés par matricule avant
 d'être regroupés par département (`compareMatricules()`), et les
