@@ -129,18 +129,21 @@ l'ordre des colonnes suit ce même regroupement, pas seulement leur couleur :
 4. **Totaux bruts** (violet), **toujours en toutes dernières colonnes** :
    Salaire brut, Coût employeur, Salaire net imposable, Salaire net, puis
    "Total indemnité (NS)" si le fichier déposé contient au moins une colonne
-   "(NS)" (ex. Indem. Matériel (NS)) — sinon cette dernière colonne
-   n'apparaît pas.
+   "non soumise" (ex. "Indem. Matériel (NS)", "Déf. non soumis") — sinon
+   cette dernière colonne n'apparaît pas.
 
 `Salaire brut (en €)` est **calculée** (formule SOMME de toutes les colonnes
 euros de la zone "variables de paie" de la ligne, **à l'exclusion des
-colonnes "(NS)"**), et non recopiée depuis le fichier source : modifier un
-nombre d'heures recalcule aussi le salaire brut, comme le reste de l'outil.
-Elle remplace "Total somme", qui n'est plus reprise dans l'export.
+colonnes "non soumises"**), et non recopiée depuis le fichier source :
+modifier un nombre d'heures recalcule aussi le salaire brut, comme le reste
+de l'outil. Elle remplace "Total somme", qui n'est plus reprise dans
+l'export.
 
 `Total indemnité (NS)` est également **calculée** : formule SOMME de
-l'ensemble des colonnes "(NS)" en euros de la ligne (`isNsLabel()` /
-`nsSumCols` dans `src/generator.js`), tenues à part de "Salaire brut".
+l'ensemble des colonnes "non soumises" en euros de la ligne — repérées soit
+par l'abréviation "(NS)" (ex. "Indem. Matériel (NS)"), soit en toutes
+lettres (ex. "Déf. non soumis") — via `isNsLabel()` / `nsSumCols` dans
+`src/generator.js`, tenues à part de "Salaire brut".
 
 Les 4 premières lignes (bandeau + en-têtes) sont figées pour rester visibles
 au défilement.

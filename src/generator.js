@@ -835,10 +835,11 @@ function isTotalSommeLabel(label) {
   return /^total somme\b/.test(normalizeLabel(label));
 }
 
-// Colonnes "(NS)" (non soumis) : ex. "Indem. Matériel (NS)". Exclues de la
-// somme "Salaire brut" et regroupées à part dans "Total indemnité (NS)".
+// Colonnes "non soumises" (abrégées "(NS)", ex. "Indem. Matériel (NS)", ou
+// en toutes lettres, ex. "Déf. non soumis"). Exclues de la somme "Salaire
+// brut" et regroupées à part dans "Total indemnité (NS)".
 function isNsLabel(label) {
-  return /\(ns\)/i.test(label);
+  return /\(ns\)/i.test(label) || /non soumis/i.test(label);
 }
 
 function sectionForLabel(label) {
