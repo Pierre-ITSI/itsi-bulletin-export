@@ -223,12 +223,6 @@ const METIER_TO_DEPT = {
   "1er assistant monteur cinema": "MONTAGE",
 };
 
-const DEPARTMENT_ORDER = [
-  "REGIE", "PRODUCTION", "REALISATION", "IMAGE", "MACHINERIE",
-  "ELECTRICITE", "SON", "DECORATION", "COSTUMES", "MAQUILLAGE",
-  "COIFFURE", "MONTAGE", "AUTRES",
-];
-
 function stripAccents(s) {
   return s.normalize("NFKD").replace(/[̀-ͯ]/g, "");
 }
@@ -237,6 +231,19 @@ function classifyMetier(metier) {
   if (!metier) return "AUTRES";
   const key = stripAccents(String(metier).trim().toLowerCase());
   return METIER_TO_DEPT[key] || "AUTRES";
+}
+
+// Les matricules sont attribués avec le code CNC du département en préfixe :
+// trier par matricule revient donc à trier par département, sans avoir à
+// maintenir un ordre de département arbitraire ici. Compare numériquement
+// si les deux valeurs sont des nombres, sinon en texte.
+function compareMatricules(a, b) {
+  const na = Number(a);
+  const nb = Number(b);
+  if (a != null && b != null && !Number.isNaN(na) && !Number.isNaN(nb)) {
+    return na - nb;
+  }
+  return String(a ?? "").localeCompare(String(b ?? ""));
 }
 
 // --------------------------------------------------------------------------
@@ -576,6 +583,7 @@ export async function buildOutput(headers, sourceRows, options) {
   const debutCol = srcLetterForTargetLabel("Date de début");
   const finCol = srcLetterForTargetLabel("Date de fin");
   const contratCol = srcLetterForTargetLabel("Code contrat (itsi)");
+  const matriculeCol = srcLetterForTargetLabel("Matricule salarié production (itsi)");
 
   // -- bandeau d'en-tête (lignes 1-3) --------------------------------
   ws.getCell("F1").value = "Société"; ws.getCell("F1").font = FONT_LABEL_BOLD;
@@ -620,9 +628,17 @@ export async function buildOutput(headers, sourceRows, options) {
   ws.getRow(headerRow).height = HEADER_ROW_HEIGHT;
 
   // -- regroupement des salariés par département -----------------------
+  // Trié par matricule avant regroupement : le préfixe CNC du matricule
+  // fait que cet ordre est aussi un ordre de département, sans avoir à
+  // maintenir une liste de département arbitraire ici (l'ordre de sortie
+  // suit l'ordre de première apparition, comme ProjectJobController::index
+  // côté production : tri par référence puis regroupement).
   const byDept = {};
   const unclassified = new Set();
-  for (const { srcRow, data } of sourceRows) {
+  const sortedForGrouping = matriculeCol
+    ? [...sourceRows].sort((a, b) => compareMatricules(a.data[matriculeCol], b.data[matriculeCol]))
+    : sourceRows;
+  for (const { srcRow, data } of sortedForGrouping) {
     const metier = metierCol ? data[metierCol] : undefined;
     const dept = classifyMetier(metier);
     if (dept === "AUTRES") unclassified.add(metier);
@@ -635,7 +651,7 @@ export async function buildOutput(headers, sourceRows, options) {
   let currentRow = headerRow + 2; // ligne 5 vide comme dans le modèle
   const subtotalRefs = {}; // tgtCol -> [ligne sous-total département, ...]
 
-  for (const dept of DEPARTMENT_ORDER) {
+  for (const dept of Object.keys(byDept)) {
     const entries = byDept[dept];
     if (!entries || entries.length === 0) continue;
 

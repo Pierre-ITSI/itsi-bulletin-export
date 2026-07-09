@@ -62,6 +62,15 @@ une liste explicite à compléter si de nouveaux intitulés de poste
 apparaissent ; un métier non reconnu est classé dans "AUTRES" et signalé à
 l'utilisateur dans l'interface plutôt que de faire échouer la génération.
 
+**Ordre des départements** : les salariés sont triés par matricule avant
+d'être regroupés par département (`compareMatricules()`), et les
+départements sortent dans leur ordre de première apparition — sans liste
+d'ordre codée en dur. Le matricule est attribué avec le code CNC du
+département en préfixe, donc trier par matricule revient à trier par
+département. Ce mécanisme reproduit volontairement celui
+d'itsi-production (`ProjectJobController::index`, tri par référence puis
+regroupement Laravel qui conserve l'ordre de première rencontre).
+
 ## Sous-totaux
 
 Trois niveaux de sous-total sont générés, avec des formules SOMME qui ne se
