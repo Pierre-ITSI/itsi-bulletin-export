@@ -679,9 +679,9 @@ function countJours(v) {
 
 // La colonne source "Jour(s) travaillés" stocke une liste de dates séparées
 // par ";" (ex. "2026-06-29;2026-06-30"), au format ISO ou JJ/MM/AAAA selon
-// les exports. Formatte cette liste en texte lisible JJ/MM/AAAA pour la
-// colonne "Jours travaillés (dates)", ajoutée juste avant le nombre de
-// jours calculé par `countJours`.
+// les exports. Formatte cette liste en AAAA-MM-JJ séparées par ";" (même
+// format que le fichier source) pour la colonne "Jours travaillés (dates)",
+// ajoutée juste avant le nombre de jours calculé par `countJours`.
 function parseIsoOrFrenchDate(s) {
   const iso = String(s).trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
   if (iso) {
@@ -703,9 +703,9 @@ function formatWorkedDates(v) {
     .map((p) => {
       const d = parseIsoOrFrenchDate(p);
       if (!d) return p;
-      return `${String(d.getUTCDate()).padStart(2, "0")}/${String(d.getUTCMonth() + 1).padStart(2, "0")}/${d.getUTCFullYear()}`;
+      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
     })
-    .join(", ");
+    .join(";");
 }
 
 // La lecture du fichier source passe par SheetJS (xlsx) plutôt qu'exceljs :

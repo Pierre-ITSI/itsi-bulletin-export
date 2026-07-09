@@ -102,7 +102,8 @@ l'interface.
 
 La colonne source "Jour(s) travaillés" (liste de dates séparées par ";")
 donne lieu à **deux** colonnes dans l'export : "Jours travaillés (dates)",
-juste avant, qui liste ces dates en clair (JJ/MM/AAAA) pour vérification,
+juste avant, qui liste ces dates en clair (AAAA-MM-JJ séparées par ";",
+même format que le fichier source) pour vérification,
 et "Jour(s) travaillés" qui garde le nombre de jours (`countJours()`,
 `formatWorkedDates()` dans `src/generator.js`) utilisé par les sous-totaux.
 La colonne "dates" n'est jamais sommée (texte, pas nombre) : elle reste
