@@ -994,7 +994,7 @@ function labelIsEuros(label) {
 }
 
 function writeValue(cell, val, label, srcCol, tgtCol, srcRow, targetRow, colmap, frozenStats) {
-  if (label === "Date de début" || label === "Date de fin") {
+  if (label === "Date de début" || label === "Date de fin" || label === "Date") {
     const d = parseDate(val);
     cell.value = d;
     if (d instanceof Date) cell.numFmt = FMT_DATE;
@@ -1954,4 +1954,367 @@ export async function generateSheet(sourceArrayBuffer, options) {
     throw new Error("Aucune ligne de feuille trouvée dans le fichier source.");
   }
   return buildSheetOutput(headers, rows, options);
+}
+
+// ============================================================================
+// 7. Génération à partir d'un export "Feuille détaillée" (SheetDetailedExcelExport)
+// ============================================================================
+//
+// Un fichier par relevé (une seule feuille, un seul salarié, une seule
+// semaine) : détail jour par jour, pas de regroupement département/contrat
+// (il n'y a qu'un seul salarié). Structure fixe du fichier source (jamais de
+// colonnes "au cas où" à filtrer par position, seulement par libellé, comme
+// le reste de l'outil) : ligne 1 = libellés d'identité (Nom, Prénom…
+// Statut), ligne 2 = valeurs, ligne 3 = séparateur "-", ligne 4 = libellés du
+// tableau jour par jour (Date, Début… Prix), lignes suivantes = un jour par
+// ligne, dernière ligne = pied (totaux). Le fichier source n'a aucun style
+// ni aucune formule (juste `FromArray` côté production) : tout le formatage
+// ci-dessous (zones de couleur, gras, formats, formules vivantes) est donc
+// entièrement appliqué par ce générateur, pas seulement corrigé.
+
+const SHEET_DETAIL_IDENTITY_LABELS_LIST = [
+  "Nom", "Prénom", "Email", "Métier", "Semaine", "Date de début",
+  "Date de fin", "Contrat", "Taux horaire", "Tournage ou préparation",
+  "Heure(s) équivalence", "Statut",
+];
+const SHEET_DETAIL_IDENTITY_TARGET_NORM_TO_LABEL = new Map(
+  SHEET_DETAIL_IDENTITY_LABELS_LIST.map((l) => [normalizeLabel(l), l])
+);
+
+// "Transport" et "Total travaillé" n'ont pas de suffixe "(h)" dans le
+// fichier source (contrairement au reste des colonnes heures/euros) : on
+// les renomme ici avec le suffixe "(en h)"/"(en €)" pour profiter des mêmes
+// règles de format (labelIsHours/labelIsEuros) et de couleur que le reste
+// de l'outil. "Prix" devient "Prix (en €)" pour la même raison.
+const SHEET_DETAIL_DAY_RENAME = {
+  transport: "Transport (en h)",
+  "total travaille": "Total travaillé (en h)",
+  prix: "Prix (en €)",
+};
+const SHEET_DETAIL_DAY_HEADERS_LIST = [
+  "Date", "Début", "Repas", "Pause", "Fin", "Transport (en h)",
+  "Total travaillé (en h)",
+  ...SHEET_REM_CODES.flatMap((code) => [`${code} (en h)`, `${code} (en €)`]),
+  "Prix (en €)",
+];
+const SHEET_DETAIL_DAY_TARGET_NORM_TO_LABEL = new Map(
+  SHEET_DETAIL_DAY_HEADERS_LIST.map((l) => [normalizeLabel(l), l])
+);
+
+// Zone bleue ("contrat") : colonnes de pointage horaire, sans composante
+// monétaire directe (comme "Date de début"/"Date de fin" côté Combine et
+// Feuille). Zone verte ("paie") : heures travaillées et variables de paie.
+// Zone violette ("totaux") : "Prix (en €)", total calculé de la ligne.
+const SHEET_DETAIL_DAY_IDENTITY_LABELS = new Set([
+  "Date", "Début", "Repas", "Pause", "Fin", "Transport (en h)",
+]);
+function sectionForDetailDayLabel(label) {
+  if (SHEET_DETAIL_DAY_IDENTITY_LABELS.has(label)) return "contrat";
+  if (label === "Prix (en €)") return "totaux";
+  return "paie";
+}
+function numFmtForDetailDayLabel(label) {
+  if (labelIsEuros(label)) return FMT_EUROS;
+  if (labelIsHours(label)) return FMT_HOURS;
+  return "General";
+}
+
+// Lecture du fichier "Feuille détaillée" : structure fixe (cf. docblock plus
+// haut), donc lue par position de bloc plutôt que par ancre de colonne
+// comme `readSource` (il n'y a qu'une seule "ligne" d'identité, pas des
+// lignes de détail répétées à filtrer par colonne ancre).
+async function readDetailedSheetSource(arrayBuffer) {
+  const wb = XLSX.read(new Uint8Array(arrayBuffer), { type: "array", cellFormula: true });
+  const sheetName = wb.SheetNames[0];
+  const ws = wb.Sheets[sheetName];
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+
+  function headerRowLabels(r) {
+    const out = {};
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const letter = colLetterFromIndex(c + 1);
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      if (cell && cell.v !== undefined && cell.v !== null && String(cell.v).trim() !== "") {
+        out[letter] = String(cell.v).trim();
+      }
+    }
+    return out;
+  }
+  function dataRowValues(r) {
+    const out = {};
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const letter = colLetterFromIndex(c + 1);
+      out[letter] = cellRawValue(ws[XLSX.utils.encode_cell({ r, c })]);
+    }
+    return out;
+  }
+
+  const identityHeaderRow = range.s.r;
+  const identityHeaders = headerRowLabels(identityHeaderRow);
+  const identityValues = dataRowValues(identityHeaderRow + 1);
+
+  // Ligne séparatrice "-" (`['-']` côté PHP) : repère la fin du bloc
+  // d'identité et le début du tableau jour par jour, quelle que soit sa
+  // position exacte (robuste si le nombre de champs d'identité change).
+  let sepRow = identityHeaderRow + 2;
+  for (let r = identityHeaderRow + 2; r <= range.e.r; r++) {
+    const cell = ws[XLSX.utils.encode_cell({ r, c: range.s.c })];
+    if (cell && String(cell.v).trim() === "-") {
+      sepRow = r;
+      break;
+    }
+  }
+  const dayHeaderRow = sepRow + 1;
+  const dayHeaders = headerRowLabels(dayHeaderRow);
+
+  // La dernière ligne du fichier est toujours la ligne de pied (totaux,
+  // `generateFooterArray()` côté PHP) ; toutes les lignes entre l'en-tête du
+  // tableau jour et cette dernière ligne sont des lignes de détail (un jour
+  // par ligne).
+  const footerRow = range.e.r;
+  const dayRows = [];
+  for (let r = dayHeaderRow + 1; r < footerRow; r++) {
+    dayRows.push({ srcRow: r + 1, data: dataRowValues(r) });
+  }
+
+  return { sheetName, identityHeaders, identityValues, dayHeaders, dayRows };
+}
+
+export async function buildDetailedSheetOutput(
+  sheetName,
+  identityHeaders,
+  identityValues,
+  dayHeaders,
+  dayRows,
+  options
+) {
+  const { societe, production, objet, idcc } = options;
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet((sheetName || "FEUILLE DÉTAILLÉE").slice(0, 31), {
+    views: [{ showGridLines: true }],
+  });
+
+  // -- bloc identité (Nom, Prénom… Statut) : une seule ligne de valeurs, pas
+  // de tableau répété — colonnes standard reprises par correspondance de
+  // libellé, comme le reste de l'outil.
+  const identityMapping = resolveColumnMapping(
+    identityHeaders,
+    SHEET_DETAIL_IDENTITY_TARGET_NORM_TO_LABEL,
+    {}
+  );
+  const identityLabelToSrcCol = {};
+  for (const [srcCol, label] of Object.entries(identityMapping.letterToTargetLabel)) {
+    identityLabelToSrcCol[label] = srcCol;
+  }
+  const activeIdentityLabels = SHEET_DETAIL_IDENTITY_LABELS_LIST.filter(
+    (l) => identityLabelToSrcCol[l]
+  );
+  const identityColumnPlan = [
+    ...activeIdentityLabels.map((label) => ({ label, srcCol: identityLabelToSrcCol[label] })),
+    ...identityMapping.extraEntries.map(([srcCol, label]) => ({ label, srcCol })),
+  ];
+
+  // -- tableau jour par jour (Date… Prix) : colonnes standard reprises dans
+  // l'ordre canonique, extras (codes de rémunération non répertoriés) en
+  // fin de tableau, comme côté Feuille.
+  const dayMapping = resolveColumnMapping(
+    dayHeaders,
+    SHEET_DETAIL_DAY_TARGET_NORM_TO_LABEL,
+    SHEET_DETAIL_DAY_RENAME
+  );
+  const dayLabelToSrcCol = {};
+  for (const [srcCol, label] of Object.entries(dayMapping.letterToTargetLabel)) {
+    dayLabelToSrcCol[label] = srcCol;
+  }
+  const activeDayLabels = SHEET_DETAIL_DAY_HEADERS_LIST.filter((l) => dayLabelToSrcCol[l]);
+  const dayColumnPlan = [
+    ...activeDayLabels.map((label) => ({ label, srcCol: dayLabelToSrcCol[label] })),
+    ...dayMapping.extraEntries.map(([srcCol, label]) => ({ label, srcCol })),
+  ];
+  const nDayCols = dayColumnPlan.length;
+
+  const dayTargetLetterOf = {};
+  const dayTargetLabelOf = {};
+  const daySectionOfIndex = [];
+  dayColumnPlan.forEach(({ label, srcCol }, i) => {
+    const idx = i + 1;
+    const letter = colLetterFromIndex(idx);
+    daySectionOfIndex[idx] = sectionForDetailDayLabel(label);
+    dayTargetLetterOf[srcCol] = letter;
+    dayTargetLabelOf[srcCol] = label;
+  });
+  const dayColmap = { ...dayTargetLetterOf };
+  const sectionBoundaryCols = [];
+  for (let i = 1; i < nDayCols; i++) {
+    if (daySectionOfIndex[i] !== daySectionOfIndex[i + 1]) sectionBoundaryCols.push(i);
+  }
+
+  // Colonnes "(en €)" du tableau jour, pour calculer "Prix (en €)" par
+  // formule (somme des variables de paie en € de la ligne) plutôt que de
+  // recopier la valeur texte du fichier source ("209,46 €", pas un nombre).
+  const dayEuroCols = dayColumnPlan
+    .filter(({ label }) => sectionForDetailDayLabel(label) === "paie" && labelIsEuros(label))
+    .map(({ srcCol }) => dayTargetLetterOf[srcCol]);
+  const PRIX_SRC = dayLabelToSrcCol["Prix (en €)"];
+
+  // Colonne cible "Taux horaire" du bloc identité, et coefficient de taux
+  // pour chaque code du référentiel (mêmes coefficients que côté Feuille,
+  // `SHEET_HOUR_RATE_COEF`) : les colonnes "(en €)" calculées par formule
+  // (taux horaire x coefficient x heures) restent vivantes si le taux
+  // horaire ou les heures d'un jour sont modifiés, au lieu d'une valeur
+  // figée recopiée du fichier source.
+  const hourColOfEuroLabel = {};
+  for (const eurosLabel of SHEET_HOUR_RATE_COEF.keys()) {
+    const hoursLabel = eurosLabel.replace(/\(en €\)$/, "(en h)");
+    const hSrcCol = dayLabelToSrcCol[hoursLabel];
+    if (hSrcCol && dayTargetLetterOf[hSrcCol]) {
+      hourColOfEuroLabel[eurosLabel] = dayTargetLetterOf[hSrcCol];
+    }
+  }
+
+  // -- bandeau d'en-tête (lignes 1-3), même convention que Combine/Feuille --
+  ws.getCell("F1").value = "Société"; ws.getCell("F1").font = FONT_LABEL_BOLD;
+  ws.getCell("G1").value = "Production"; ws.getCell("G1").font = FONT_LABEL_BOLD;
+  ws.getCell("H1").value = "N° objet"; ws.getCell("H1").font = FONT_LABEL_BOLD;
+  ws.getCell("J1").value = "IDCC"; ws.getCell("J1").font = FONT_LABEL_BOLD;
+
+  ws.getCell("A2").value = "Période exportée";
+  ws.getCell("F2").value = societe;
+  ws.getCell("G2").value = production;
+  ws.getCell("H2").value = objet;
+  ws.getCell("J2").value = idcc;
+
+  const debutCol = identityLabelToSrcCol["Date de début"];
+  const finCol = identityLabelToSrcCol["Date de fin"];
+  const debut = debutCol ? parseDate(identityValues[debutCol]) : null;
+  const fin = finCol ? parseDate(identityValues[finCol]) : null;
+  if (debut instanceof Date && fin instanceof Date) {
+    const fmt = (d) =>
+      `${String(d.getUTCDate()).padStart(2, "0")}/${String(d.getUTCMonth() + 1).padStart(2, "0")}/${d.getUTCFullYear()}`;
+    ws.getCell("A3").value = `du ${fmt(debut)} au ${fmt(fin)}`;
+  } else {
+    ws.getCell("A3").value = "du ... au ...";
+  }
+
+  // -- bloc identité (lignes 5-6) --------------------------------------
+  const identityHeaderRow = 5;
+  const identityValuesRow = 6;
+  identityColumnPlan.forEach(({ label }, i) => {
+    const idx = i + 1;
+    const cell = ws.getCell(identityHeaderRow, idx);
+    cell.value = label;
+    cell.font = FONT_LABEL_BOLD;
+    cell.alignment = { ...CENTER, wrapText: true };
+    cell.fill = SECTION_HEADER_FILL.contrat;
+    cell.border = { bottom: HEADER_BOTTOM_BORDER };
+    ws.getColumn(idx).width = widthForLabel(label);
+  });
+  ws.getRow(identityHeaderRow).height = HEADER_ROW_HEIGHT;
+  identityColumnPlan.forEach(({ label, srcCol }, i) => {
+    const idx = i + 1;
+    const cell = ws.getCell(identityValuesRow, idx);
+    const val = identityValues[srcCol];
+    if (label === "Date de début" || label === "Date de fin") {
+      const d = parseDate(val);
+      cell.value = d;
+      if (d instanceof Date) cell.numFmt = FMT_DATE;
+    } else {
+      cell.value = val === undefined ? null : val;
+      if (label === "Taux horaire") cell.numFmt = FMT_TAUX;
+    }
+    cell.fill = SECTION_DATA_FILL.contrat;
+  });
+  const tauxIdentityIdx = identityColumnPlan.findIndex((e) => e.label === "Taux horaire");
+  const tauxCellRef =
+    tauxIdentityIdx === -1
+      ? null
+      : `$${colLetterFromIndex(tauxIdentityIdx + 1)}$${identityValuesRow}`;
+
+  // -- tableau jour par jour (en-tête ligne 8, détail à partir de 9) ----
+  const dayHeaderRowIdx = 8;
+  dayColumnPlan.forEach(({ label }, i) => {
+    const idx = i + 1;
+    const cell = ws.getCell(dayHeaderRowIdx, idx);
+    cell.value = label;
+    cell.font = FONT_LABEL_BOLD;
+    cell.alignment = { ...CENTER, wrapText: true };
+    cell.fill = SECTION_HEADER_FILL[sectionForDetailDayLabel(label)];
+    cell.border = { bottom: HEADER_BOTTOM_BORDER };
+    ws.getColumn(idx).width = widthForLabel(label);
+  });
+  ws.getRow(dayHeaderRowIdx).height = HEADER_ROW_HEIGHT;
+
+  let currentRow = dayHeaderRowIdx + 1;
+  const dayFirstRow = currentRow;
+  for (const { srcRow, data } of dayRows) {
+    const targetRow = currentRow;
+    for (const [srcCol, tgtCol] of Object.entries(dayTargetLetterOf)) {
+      const val = data[srcCol];
+      const label = dayTargetLabelOf[srcCol];
+      const tgtIdx = colIndexFromLetter(tgtCol);
+      const outCell = ws.getCell(targetRow, tgtIdx);
+      const rateCoef = SHEET_HOUR_RATE_COEF.get(label);
+      const rateHourCol = rateCoef !== undefined ? hourColOfEuroLabel[label] : undefined;
+      const useRateFormula = rateCoef !== undefined && tauxCellRef && rateHourCol;
+      if (useRateFormula) {
+        outCell.value = { formula: `${tauxCellRef}*${rateCoef}*${rateHourCol}${targetRow}` };
+        outCell.numFmt = FMT_EUROS;
+      } else if (srcCol === PRIX_SRC && dayEuroCols.length) {
+        outCell.value = {
+          formula: `SUM(${dayEuroCols.map((c) => `${c}${targetRow}`).join(",")})`,
+        };
+        outCell.numFmt = FMT_EUROS;
+      } else {
+        writeValue(outCell, val, label, srcCol, tgtCol, srcRow, targetRow, dayColmap, new Map());
+        if (!outCell.numFmt) outCell.numFmt = numFmtForDetailDayLabel(label);
+      }
+      outCell.fill = SECTION_DATA_FILL[sectionForDetailDayLabel(label)];
+    }
+    currentRow += 1;
+  }
+  const dayLastRow = currentRow - 1;
+
+  // -- pied de tableau (totaux) : formule SOMME sur chaque colonne "paie"/
+  // "totaux" du tableau jour, comme la ligne TOTAL GÉNÉRAL de Combine/
+  // Feuille (pas de fill particulier, seulement en gras).
+  const footerRowIdx = currentRow;
+  ws.getCell(footerRowIdx, 1).value = "TOTAL";
+  ws.getCell(footerRowIdx, 1).font = FONT_LABEL_BOLD;
+  dayColumnPlan.forEach(({ label }, i) => {
+    const idx = i + 1;
+    if (sectionForDetailDayLabel(label) === "contrat") return;
+    const letter = colLetterFromIndex(idx);
+    const cell = ws.getCell(footerRowIdx, idx);
+    cell.value = { formula: `SUM(${letter}${dayFirstRow}:${letter}${dayLastRow})` };
+    cell.font = FONT_LABEL_BOLD;
+    cell.numFmt = numFmtForDetailDayLabel(label);
+  });
+
+  // -- bordures verticales entre zones de colonnes (contrat / paie / totaux)
+  for (const boundaryCol of sectionBoundaryCols) {
+    for (let r = dayHeaderRowIdx; r <= footerRowIdx; r++) {
+      const cell = ws.getCell(r, boundaryCol);
+      cell.border = { ...cell.border, right: SECTION_BORDER };
+    }
+  }
+
+  const buffer = await wb.xlsx.writeBuffer();
+  return { buffer, warnings: [], unclassified: [] };
+}
+
+export async function generateDetailedSheet(sourceArrayBuffer, options) {
+  const { sheetName, identityHeaders, identityValues, dayHeaders, dayRows } =
+    await readDetailedSheetSource(sourceArrayBuffer);
+  if (dayRows.length === 0) {
+    throw new Error("Aucune ligne de détail (jour) trouvée dans le fichier source.");
+  }
+  return buildDetailedSheetOutput(
+    sheetName,
+    identityHeaders,
+    identityValues,
+    dayHeaders,
+    dayRows,
+    options
+  );
 }

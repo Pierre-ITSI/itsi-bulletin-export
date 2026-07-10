@@ -13,15 +13,16 @@ un serveur.
 ## Utilisation
 
 Ouvrir la page, choisir le **type de fichier** déposé (« Combine » pour un
-export de bulletins de paie, ex. Marie-Christine, ou « Feuille » pour un
-export de relevés d'heures — cf. `Deux types de fichiers source` plus bas),
-déposer le fichier `.xlsx` (glisser-déposer ou bouton « Choisir un
-fichier »), ajuster si besoin les champs Société / Production / N° objet /
-IDCC, puis télécharger le fichier généré.
+export de bulletins de paie, ex. Marie-Christine, « Feuille » pour un
+export de relevés d'heures consolidé, ou « Feuille détaillée » pour un
+export de relevé détail jour par jour — cf. `Trois types de fichiers
+source` plus bas), déposer le fichier `.xlsx` (glisser-déposer ou bouton
+« Choisir un fichier »), ajuster si besoin les champs Société / Production
+/ N° objet / IDCC, puis télécharger le fichier généré.
 
-## Deux types de fichiers source
+## Trois types de fichiers source
 
-Le sélecteur « Type de fichier » choisit entre deux générateurs, qui
+Le sélecteur « Type de fichier » choisit entre trois générateurs, qui
 partagent l'essentiel de leur logique (`src/generator.js`) mais ciblent des
 formats source différents :
 
@@ -31,16 +32,25 @@ formats source différents :
   travaillés", "Salaire brut" (remplace "Total somme"), "Coût employeur",
   "Salaire net imposable/net".
 - **Feuille** (`generateSheet()` / `buildSheetOutput()`) : export de
-  relevés d'heures hebdomadaires (`SheetExcelExport` côté production, une
-  ligne par relevé/semaine). Pas de section Garantie Minimale. La zone
-  totaux comporte 5 colonnes (voir `Totaux côté Feuille` plus bas) au lieu
-  de 4-5 côté Combine. "Code contrat" et "Jour(s) travaillés" ne sont
-  **pas encore** fournis par `SheetExcelExport` à ce jour — voir
-  `Colonnes "Code contrat" / "Jour(s) travaillés" côté Feuille` plus bas
-  pour le contrat de données attendu une fois ajoutés côté production.
+  relevés d'heures hebdomadaires consolidés (`SheetExcelExport` côté
+  production, une ligne par relevé/semaine, tous salariés/départements
+  confondus). Pas de section Garantie Minimale. La zone totaux comporte 5
+  colonnes (voir `Totaux côté Feuille` plus bas) au lieu de 4-5 côté
+  Combine. "Code contrat" et "Jour(s) travaillés" ne sont **pas encore**
+  fournis par `SheetExcelExport` à ce jour — voir `Colonnes "Code contrat"
+  / "Jour(s) travaillés" côté Feuille` plus bas pour le contrat de données
+  attendu une fois ajoutés côté production.
+- **Feuille détaillée** (`generateDetailedSheet()` /
+  `buildDetailedSheetOutput()`) : export détaillé d'**un seul** relevé
+  (`SheetDetailedExcelExport` côté production, un fichier par salarié/
+  semaine), détail jour par jour (heures d'arrivée/repas/pause/départ,
+  variables de paie du jour). Pas de regroupement département/contrat (un
+  seul salarié par fichier) — voir `Génération "Feuille détaillée"` plus
+  bas pour la mise en page propre à ce format.
 
-Les deux partagent : la résolution de colonnes par nom (`resolveColumnMapping()`,
-paramétrable par format cible), le classement des métiers par département
+Combine et Feuille (grosses tables consolidées multi-salariés) partagent :
+la résolution de colonnes par nom (`resolveColumnMapping()`, paramétrable
+par format cible), le classement des métiers par département
 (`METIER_TO_DEPT`/`classifyMetier()` — même référentiel des deux côtés,
 "Métier" désignant le même champ), le tri par matricule
 (`compareMatricules()`), les sections de couleur (`fillSectionForLabel()`/
@@ -49,7 +59,11 @@ sous-total contrat, le format euros sans arrondi de "Taux horaire"
 (`FMT_TAUX`), les sous-totaux, et le calcul "taux horaire x coefficient x
 heures" pour les variables concernées (cf. `Colonnes calculées` plus bas —
 indexé par libellé court côté Combine, par code brut côté Feuille,
-`SHEET_HOUR_RATE_COEF`).
+`SHEET_HOUR_RATE_COEF`). Feuille détaillée réutilise `resolveColumnMapping()`
+et le même calcul "taux horaire x coefficient x heures"
+(`SHEET_HOUR_RATE_COEF`), mais pas les mécanismes de regroupement
+département/contrat (un seul salarié par fichier) — cf. `Génération
+"Feuille détaillée"` plus bas.
 
 **Différence** : côté Combine, les colonnes "non soumises" (`isNsLabel()`)
 sont affichées dans un vert plus foncé pour les distinguer visuellement
@@ -299,3 +313,68 @@ lettres (ex. "Déf. non soumis") — via `isNsLabel()` / `nsSumCols` dans
 
 Les 4 premières lignes (bandeau + en-têtes) sont figées pour rester visibles
 au défilement.
+
+## Génération "Feuille détaillée"
+
+Contrairement à Combine et Feuille (grosses tables consolidées,
+multi-salariés, regroupées par département/contrat), un fichier "Feuille
+détaillée" décrit **un seul** relevé (un salarié, une semaine) : le
+fichier source (`SheetDetailedExcelExport::array()` côté production) est
+une structure fixe, pas une table de colonnes standard filtrée par nom
+comme le reste de l'outil :
+
+1. Ligne des libellés d'identité (Nom, Prénom, Email, Métier, Semaine,
+   Date de début, Date de fin, Contrat, Taux horaire, Tournage ou
+   préparation, Heure(s) équivalence, Statut).
+2. Ligne des valeurs correspondantes.
+3. Ligne séparatrice (une seule cellule "-").
+4. Ligne des libellés du tableau jour par jour (Date, Début, Repas, Pause,
+   Fin, Transport, Total travaillé, puis les paires (h)/(€) du référentiel
+   `SHEET_REM_CODES`, puis Prix).
+5. Une ligne par jour du relevé.
+6. Une dernière ligne de pied (totaux).
+
+`readDetailedSheetSource()` repère la ligne séparatrice ("-") pour situer
+la frontière entre le bloc identité et le tableau jour, et traite toujours
+la **dernière ligne du fichier** comme le pied de tableau — pas de
+recherche par nom de colonne "ancre" comme `readSource()`, la structure
+étant fixe et garantie par le code source PHP.
+
+Le fichier source ne contient **aucun style ni aucune formule** (export
+`FromArray` brut côté production) : contrairement à Combine/Feuille (qui
+corrigent un fichier déjà mis en forme), tout le formatage est appliqué
+ici from scratch, avec les mêmes conventions que le reste de l'outil :
+
+- Même bandeau d'en-tête (Société/Production/N° objet/IDCC + période
+  exportée, calculée à partir de "Date de début"/"Date de fin" du relevé)
+  que Combine/Feuille, sur les lignes 1-3.
+- Bloc identité (lignes 5-6) dans la zone bleue ("contrat"), "Date de
+  début"/"Date de fin" au format date, "Taux horaire" au format
+  `FMT_TAUX`.
+- Tableau jour par jour (en-tête ligne 8, un jour par ligne à partir de la
+  ligne 9), sur 3 zones : bleu ("contrat") pour les colonnes de pointage
+  horaire (Date, Début, Repas, Pause, Fin, Transport — aucune n'a de
+  composante monétaire directe), vert ("paie") pour "Total travaillé" et
+  les variables de paie, violet ("totaux") pour "Prix (en €)".
+- Les colonnes "(en €)" des codes du référentiel `SHEET_HOUR_RATE_COEF`
+  sont **calculées** par formule (taux horaire x coefficient x heures,
+  référence absolue vers la cellule "Taux horaire" du bloc identité — un
+  seul taux pour tout le relevé), comme côté Combine/Feuille, au lieu
+  d'être recopiées du fichier source.
+- "Prix (en €)" (par jour) est **calculée** : formule SOMME des colonnes
+  "(en €)" de la zone "paie" de la ligne, au lieu de recopier la valeur
+  texte du fichier source (ex. "209,46 €", qui n'est pas un nombre
+  exploitable en formule).
+- La ligne de pied ("TOTAL", en gras, sans fill particulier — même
+  convention que "TOTAL GÉNÉRAL" côté Combine/Feuille) additionne par
+  formule SOMME chaque colonne des zones "paie"/"totaux" sur les lignes de
+  détail, plutôt que de recopier les totaux déjà calculés du fichier
+  source.
+- Le nom de la feuille de calcul générée reprend celui du fichier source
+  (ex. "ROX.F0544", `$sheet->getShortPUID()` côté PHP), pour rester
+  identifiable facilement.
+
+Tous les calculs recalculés (formules taux x coefficient x heures, "Prix
+(en €)", pied de tableau) ont été vérifiés colonne par colonne contre les
+valeurs déjà présentes dans un fichier réel de référence : résultats
+identiques au centime près.

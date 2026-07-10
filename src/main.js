@@ -1,5 +1,5 @@
 import "./style.css";
-import { generate, generateSheet } from "./generator.js";
+import { generate, generateSheet, generateDetailedSheet } from "./generator.js";
 
 const app = document.querySelector("#app");
 
@@ -22,6 +22,16 @@ const FILE_TYPES = {
     run: generateSheet,
     suffix: "_export_feuilles.xlsx",
   },
+  feuille_detaillee: {
+    label: "Feuille détaillée",
+    subtitle:
+      "Déposer un fichier d'export de Feuille détaillée excel extrait " +
+      "d'itsi-production (SheetDetailedExcelExport, détail jour par jour " +
+      "d'un seul relevé), pour obtenir le même détail mis en forme, avec " +
+      "les formules conservées.",
+    run: generateDetailedSheet,
+    suffix: "_export_feuille_detaillee.xlsx",
+  },
 };
 
 app.innerHTML = `
@@ -38,6 +48,10 @@ app.innerHTML = `
       <label class="radio-label">
         <input type="radio" name="file-type" value="feuille" />
         ${FILE_TYPES.feuille.label}
+      </label>
+      <label class="radio-label">
+        <input type="radio" name="file-type" value="feuille_detaillee" />
+        ${FILE_TYPES.feuille_detaillee.label}
       </label>
     </fieldset>
 
