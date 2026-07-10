@@ -34,32 +34,39 @@ formats source différents :
   relevés d'heures hebdomadaires (`SheetExcelExport` côté production, une
   ligne par relevé/semaine), regroupement par **matricule** (pas de code
   contrat dans cet export). Pas de section Garantie Minimale ni de "Jour(s)
-  travaillés" ; à la place, "Total somme" (calculée, même rôle que "Salaire
-  brut" côté Combine) et "Total itsi" (recopiée telle quelle depuis le
-  fichier source, total déjà calculé côté production).
+  travaillés". La zone totaux comporte 5 colonnes (voir
+  `Totaux côté Feuille` plus bas) au lieu de 4-5 côté Combine.
 
 Les deux partagent : la résolution de colonnes par nom (`resolveColumnMapping()`,
 paramétrable par format cible), le classement des métiers par département
 (`METIER_TO_DEPT`/`classifyMetier()` — même référentiel des deux côtés,
 "Métier" désignant le même champ), le tri par matricule
-(`compareMatricules()`), les sections de couleur (dont le vert plus foncé
-des colonnes "non soumises", `fillSectionForLabel()`/
-`fillSectionForSheetLabel()`), le renommage "Total non soumis", le
-matricule affiché sur les lignes de sous-total contrat, le format euros
-sans arrondi de "Taux horaire" (`FMT_TAUX`), les sous-totaux, et le calcul
-"taux horaire x coefficient x heures" pour les variables concernées (cf.
-`Colonnes calculées` plus bas — indexé par libellé court côté Combine, par
-code brut côté Feuille, `SHEET_HOUR_RATE_COEF`).
+(`compareMatricules()`), les sections de couleur (`fillSectionForLabel()`/
+`fillSectionForSheetLabel()`), le matricule affiché sur les lignes de
+sous-total contrat, le format euros sans arrondi de "Taux horaire"
+(`FMT_TAUX`), les sous-totaux, et le calcul "taux horaire x coefficient x
+heures" pour les variables concernées (cf. `Colonnes calculées` plus bas —
+indexé par libellé court côté Combine, par code brut côté Feuille,
+`SHEET_HOUR_RATE_COEF`).
+
+**Différence** : côté Combine, les colonnes "non soumises" (`isNsLabel()`)
+sont affichées dans un vert plus foncé pour les distinguer visuellement
+(`fillSectionForLabel()`) ; côté Feuille, le fichier de référence de
+production ne fait pas cette distinction visuelle (les colonnes DNS/ReNS
+restent dans le vert standard de la zone "variables de paie") —
+`fillSectionForSheetLabel()` ne route donc jamais vers cette teinte.
 
 **Différence assumée** : l'assombrissement/saturation des lignes en
 abattement (cf. `Contrats en abattement` plus bas) n'existe que côté
 Combine — l'export "Feuille" (`SheetExcelExport::headings()`) ne contient
 pas de colonne "Abattement", il n'y a donc rien à détecter.
 
-Le générateur "Feuille" a été construit uniquement à partir des colonnes
-définies dans `SheetExcelExport::headings()`/`format()` (fourni en
-conversation), **sans fichier d'export réel pour validation** — à tester
-sur un vrai fichier avant usage en production.
+Le générateur "Feuille" a été construit à partir des colonnes définies
+dans `SheetExcelExport::headings()`/`format()` (fourni en conversation),
+puis sa zone de totaux a été corrigée pour correspondre exactement à un
+fichier d'export réel de référence fourni par l'utilisateur (structure,
+formules, couleurs et formats des 5 colonnes de totaux, cf.
+`Totaux côté Feuille` plus bas).
 
 ## Développement
 
@@ -176,6 +183,36 @@ ces colonnes (`HOUR_RATE_COEF` dans `src/generator.js`).
 Les indemnités à montant libre (transport, repas, cachets, défraiements…)
 ne sont pas concernées et gardent leur comportement précédent (valeur ou
 formule traduite depuis le fichier source).
+
+## Totaux côté Feuille
+
+La zone totaux de l'export "Feuille" (`buildSheetOutput()`) comporte 5
+colonnes, dans cet ordre, reproduites à l'identique (structure, formules,
+couleurs, formats) depuis un fichier d'export réel de référence :
+
+1. **Total brut (en €)** (violet, `FMT_EUROS`) : **calculée**, formule
+   SOMME des colonnes euros de paie de la ligne, **à l'exclusion des
+   colonnes "non soumises"** (`isSheetNsLabel()`) — même rôle que "Salaire
+   brut" côté Combine. Remplace "Total somme", qui n'est jamais reprise
+   telle quelle dans l'export.
+2. **Total indemnité (NS)** (violet, `FMT_EUROS`) : **calculée**, formule
+   SOMME des colonnes "non soumises" en euros de la ligne
+   (`SHEET_NS_CODES` : DNS, ReNS, IMaNS) — n'apparaît que si le fichier
+   déposé contient au moins une de ces colonnes.
+3. **TOTAL (en €)** (violet, `FMT_EUROS`) : **calculée**, `Total brut +
+   Total indemnité (NS)`.
+4. **Total itsi (en €)** (bleu clair, `FMT_EUROS`) : recopiée telle
+   quelle depuis le fichier source (total déjà calculé côté production,
+   pas une formule vivante).
+5. **Écart avec itsi (en €)** (rouge clair, `FMT_EUROS_4DP` — 4
+   décimales, contrairement aux 4 colonnes précédentes) : **calculée**,
+   `TOTAL - Total itsi`, en 4 décimales pour repérer les écarts
+   d'arrondi entre le calcul refait dans ce tableau et le total figé côté
+   production.
+
+Chaque colonne n'apparaît que si les colonnes source dont elle dépend sont
+présentes dans le fichier déposé (ex. pas de "Total itsi"/"Écart avec
+itsi" si le fichier source ne contient pas "Total itsi").
 
 ## Mise en forme et ordre des colonnes
 

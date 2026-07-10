@@ -790,6 +790,9 @@ const FMT_EUROS = '#,##0.00"€"';
 // valeur réelle de la cellule, elle, ne soit jamais tronquée). Les "#"
 // n'affichent un chiffre que s'il existe (pas de zéros de remplissage).
 const FMT_TAUX = '#,##0.##########"€"';
+// "Écart avec itsi" (Feuille) : 4 décimales pour repérer les écarts
+// infra-centime entre le total calculé et le total recopié de la source.
+const FMT_EUROS_4DP = '#,##0.0000"€"';
 const FMT_DATE = "dd/mm/yyyy";
 const CENTER = { horizontal: "center", vertical: "middle" };
 
@@ -860,6 +863,9 @@ const SECTION_HEADER_FILL = {
   paie_ns: { type: "pattern", pattern: "solid", fgColor: { argb: "FFACD9B8" } }, // vert plus foncé (colonnes non soumises)
   mg: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF7D3E6" } }, // rose pastel
   totaux: { type: "pattern", pattern: "solid", fgColor: { argb: "FFE6D9F7" } }, // violet pastel
+  // -- variantes "Feuille" uniquement (cf. fillSectionForSheetLabel) --
+  totaux_itsi: { type: "pattern", pattern: "solid", fgColor: { argb: "FFCFE2F3" } }, // bleu clair ("Total itsi", recopiée depuis la source)
+  totaux_ecart: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF4CCCC" } }, // rouge clair ("Écart avec itsi", alerte)
 };
 const SECTION_DATA_FILL = {
   contrat: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF3F8FD" } },
@@ -867,6 +873,8 @@ const SECTION_DATA_FILL = {
   paie_ns: { type: "pattern", pattern: "solid", fgColor: { argb: "FFDCF0E1" } }, // vert plus foncé (colonnes non soumises)
   mg: { type: "pattern", pattern: "solid", fgColor: { argb: "FFFCEEF5" } },
   totaux: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF6F1FC" } },
+  totaux_itsi: { type: "pattern", pattern: "solid", fgColor: { argb: "FFEAF4FE" } },
+  totaux_ecart: { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEEAEA" } },
 };
 const SECTION_BORDER = { style: "medium", color: { argb: "FFB0B0B0" } };
 const HEADER_BOTTOM_BORDER = { style: "thin", color: { argb: "FF999999" } };
@@ -1439,13 +1447,17 @@ export async function generate(sourceArrayBuffer, options) {
 // ============================================================================
 //
 // Une ligne par relevé hebdomadaire (pas de bulletin de paie consolidé) :
-// pas de section Garantie Minimale, pas de "Jour(s) travaillés", pas de
-// Salaire brut/Coût employeur/Salaire net. À la place : "Total somme"
-// (calculée par formule, comme "Salaire brut" côté Combine) et "Total itsi"
-// (recopiée telle quelle depuis le fichier source, total déjà calculé côté
-// production). Pas de "Code contrat" non plus : le regroupement par contrat
-// se fait donc sur "Matricule", qui sert aussi au tri/regroupement par
-// département (même mécanisme et même dictionnaire METIER_TO_DEPT que
+// pas de section Garantie Minimale, pas de Coût employeur/Salaire net. À la
+// place, cinq colonnes de totaux (ordre du fichier de référence Feuille) :
+// "Total brut" (calculée, exclut les colonnes non soumises, comme "Salaire
+// brut" côté Combine), "Total indemnité (NS)" (calculée, uniquement les
+// colonnes non soumises), "TOTAL" (calculée, = Total brut + Total
+// indemnité (NS)), "Total itsi" (recopiée telle quelle depuis le fichier
+// source, total déjà calculé côté production), "Écart avec itsi" (calculée,
+// = TOTAL - Total itsi, pour repérer les écarts de calcul). Pas de "Code
+// contrat" non plus : le regroupement par contrat se fait donc sur
+// "Matricule", qui sert aussi au tri/regroupement par département (même
+// mécanisme et même dictionnaire METIER_TO_DEPT que
 // côté Combine, "Métier" désignant le même référentiel des deux côtés).
 
 const SHEET_IDENTITY_LABELS_LIST = [
@@ -1472,10 +1484,15 @@ const SHEET_REM_CODES = [
   "IMaS", "IMaNS", "IML", "IVHSS", "Navig", "MOBI", "Trans",
 ];
 
+// Libellé de la colonne "non soumis" côté Feuille : contrairement à
+// Combine (renommée "Total non soumis"), le fichier de référence Feuille
+// garde le nom d'origine "Total indemnité (NS)".
+const SHEET_NS_TOTAL_LABEL = "Total indemnité (NS)";
+
 const SHEET_STANDARD_HEADERS = [
   ...SHEET_IDENTITY_LABELS_LIST,
   ...SHEET_REM_CODES.flatMap((code) => [`${code} (en h)`, `${code} (en €)`]),
-  "Total somme (en €)",
+  "Total brut (en €)",
   "Total itsi (en €)",
 ];
 const SHEET_TARGET_NORM_TO_LABEL = new Map(
@@ -1484,8 +1501,10 @@ const SHEET_TARGET_NORM_TO_LABEL = new Map(
 // SheetExcelExport::headings() n'ajoute aucun suffixe "(€)" à "Total somme"
 // / "Total itsi" (contrairement aux autres colonnes euros) : ce mapping les
 // rattache à leur nom cible canonique "(en €)" pour un formatage cohérent.
+// La source appelle encore cette colonne "Total somme" ; le fichier de
+// référence Feuille l'affiche sous le nom "Total brut".
 const SHEET_IDENTITY_RENAME = {
-  "total somme": "Total somme (en €)",
+  "total somme": "Total brut (en €)",
   "total itsi": "Total itsi (en €)",
 };
 
@@ -1515,24 +1534,32 @@ function isSheetNsLabel(label) {
   return SHEET_NS_CODES.has(label.replace(/ \(en [h€]\)$/, ""));
 }
 
+const SHEET_TOTAUX_LABELS = new Set([
+  "Total brut (en €)", SHEET_NS_TOTAL_LABEL, "TOTAL (en €)",
+  "Total itsi (en €)", "Écart avec itsi (en €)",
+]);
+
 function sectionForSheetLabel(label) {
   if (SHEET_IDENTITY_LABELS.has(label)) return "contrat";
-  if (label === "Total somme (en €)" || label === "Total itsi (en €)" || label === NS_TOTAL_LABEL) {
-    return "totaux";
-  }
+  if (SHEET_TOTAUX_LABELS.has(label)) return "totaux";
   return "paie";
 }
 
-// Équivalent de fillSectionForLabel (Combine) pour l'export "Feuille" : vert
-// plus foncé pour les colonnes "non soumises" au sein de la zone "paie".
+// Équivalent de fillSectionForLabel (Combine) pour l'export "Feuille"·:
+// "Total itsi" (recopiée depuis la source) et "Écart avec itsi" (alerte)
+// ont chacune leur propre teinte, distincte du violet "totaux" standard —
+// cf. le fichier de référence Feuille. Contrairement à Combine, les
+// colonnes "non soumises" ne sont PAS mises en vert plus foncé côté
+// Feuille (le fichier de référence les garde en vert standard).
 function fillSectionForSheetLabel(label) {
-  const section = sectionForSheetLabel(label);
-  return section === "paie" && isSheetNsLabel(label) ? "paie_ns" : section;
+  if (label === "Total itsi (en €)") return "totaux_itsi";
+  if (label === "Écart avec itsi (en €)") return "totaux_ecart";
+  return sectionForSheetLabel(label);
 }
 
 function numFmtForSheetLabel(label) {
-  if (label === NS_TOTAL_LABEL) return FMT_EUROS;
-  if (labelIsEuros(label)) return FMT_EUROS;
+  if (label === "Écart avec itsi (en €)") return FMT_EUROS_4DP;
+  if (labelIsEuros(label) || SHEET_TOTAUX_LABELS.has(label)) return FMT_EUROS;
   if (labelIsHours(label)) return FMT_HOURS;
   return "General";
 }
@@ -1557,19 +1584,30 @@ export async function buildSheetOutput(headers, sourceRows, options) {
   }
   const activeStandardLabels = SHEET_STANDARD_HEADERS.filter((l) => usedTargetLabels.has(l));
   const activePayLabels = activeStandardLabels.filter(
-    (l) => l !== "Total somme (en €)" && l !== "Total itsi (en €)"
+    (l) => l !== "Total brut (en €)" && l !== "Total itsi (en €)"
   );
-  const activeTotalLabels = activeStandardLabels.filter(
-    (l) => l === "Total somme (en €)" || l === "Total itsi (en €)"
-  );
+  const hasTotalBrut = activeStandardLabels.includes("Total brut (en €)");
+  const hasTotalItsi = activeStandardLabels.includes("Total itsi (en €)");
   const hasNsEuroCol = activePayLabels.some((l) => isSheetNsLabel(l) && labelIsEuros(l));
   const SHEET_NS_TOTAL_SRC = "__SHEET_NS_TOTAL__";
+  const SHEET_TOTAL_SRC = "__SHEET_TOTAL__";
+  const SHEET_ECART_SRC = "__SHEET_ECART__";
 
+  // Ordre des colonnes de totaux (cf. fichier de référence Feuille) :
+  // "Total brut" (calculée, exclut les colonnes non soumises), "Total
+  // indemnité (NS)" (calculée, uniquement les colonnes non soumises — si
+  // au moins une est présente), "TOTAL" (calculée, = Total brut + Total
+  // indemnité (NS)), "Total itsi" (recopiée depuis la source), "Écart avec
+  // itsi" (calculée, = TOTAL - Total itsi, pour repérer les écarts de
+  // calcul avec le total déjà calculé côté production).
   const columnPlan = [
     ...activePayLabels.map((label) => ({ label, srcCol: labelToSrcCol[label] })),
     ...extraEntries.map(([srcCol, label]) => ({ label, srcCol })),
-    ...activeTotalLabels.map((label) => ({ label, srcCol: labelToSrcCol[label] })),
-    ...(hasNsEuroCol ? [{ label: NS_TOTAL_LABEL, srcCol: SHEET_NS_TOTAL_SRC }] : []),
+    ...(hasTotalBrut ? [{ label: "Total brut (en €)", srcCol: labelToSrcCol["Total brut (en €)"] }] : []),
+    ...(hasTotalBrut && hasNsEuroCol ? [{ label: SHEET_NS_TOTAL_LABEL, srcCol: SHEET_NS_TOTAL_SRC }] : []),
+    ...(hasTotalBrut ? [{ label: "TOTAL (en €)", srcCol: SHEET_TOTAL_SRC }] : []),
+    ...(hasTotalItsi ? [{ label: "Total itsi (en €)", srcCol: labelToSrcCol["Total itsi (en €)"] }] : []),
+    ...(hasTotalBrut && hasTotalItsi ? [{ label: "Écart avec itsi (en €)", srcCol: SHEET_ECART_SRC }] : []),
   ];
   const nTotalCols = columnPlan.length;
 
@@ -1601,7 +1639,7 @@ export async function buildSheetOutput(headers, sourceRows, options) {
   }
 
   // Colonnes "(en €)" de la zone paie, à l'exclusion des colonnes "non
-  // soumises" : utilisées pour calculer "Total somme" par formule plutôt
+  // soumises" : utilisées pour calculer "Total brut" par formule plutôt
   // que de recopier la valeur figée du fichier source (même logique que
   // "Salaire brut" côté Combine). "Total itsi" reste recopiée telle quelle
   // (total déjà calculé côté production, non redéfini ici).
@@ -1630,6 +1668,13 @@ export async function buildSheetOutput(headers, sourceRows, options) {
       hourColOfEuroLabel[eurosLabel] = targetLetterOf[hSrcCol];
     }
   }
+
+  // Colonnes cibles des totaux, pour les formules "TOTAL"/"Écart avec
+  // itsi" (référencées dans la même ligne, cf. boucle d'écriture).
+  const totalBrutCol = hasTotalBrut ? targetLetterOf[labelToSrcCol["Total brut (en €)"]] : null;
+  const nsTotalColSheet = hasTotalBrut && hasNsEuroCol ? targetLetterOf[SHEET_NS_TOTAL_SRC] : null;
+  const totalColSheet = hasTotalBrut ? targetLetterOf[SHEET_TOTAL_SRC] : null;
+  const totalItsiCol = hasTotalItsi ? targetLetterOf[labelToSrcCol["Total itsi (en €)"]] : null;
 
   // -- bandeau d'en-tête (lignes 1-3) --------------------------------
   ws.getCell("F1").value = "Société"; ws.getCell("F1").font = FONT_LABEL_BOLD;
@@ -1742,24 +1787,39 @@ export async function buildSheetOutput(headers, sourceRows, options) {
             // le taux horaire ou les heures sont modifiés.
             outCell.value = { formula: `${tauxCol}${targetRow}*${rateCoef}*${rateHourCol}${targetRow}` };
             outCell.numFmt = FMT_EUROS;
-          } else if (label === "Total somme (en €)" && sheetSumCols.length) {
+          } else if (label === "Total brut (en €)" && sheetSumCols.length) {
             outCell.value = {
               formula: `SUM(${sheetSumCols.map((c) => `${c}${targetRow}`).join(",")})`,
             };
             outCell.numFmt = FMT_EUROS;
-          } else if (label === NS_TOTAL_LABEL && sheetNsSumCols.length) {
+          } else if (label === SHEET_NS_TOTAL_LABEL && sheetNsSumCols.length) {
             outCell.value = {
               formula: `SUM(${sheetNsSumCols.map((c) => `${c}${targetRow}`).join(",")})`,
             };
             outCell.numFmt = FMT_EUROS;
+          } else if (label === "TOTAL (en €)" && totalBrutCol) {
+            // = Total brut + Total indemnité (NS) (si présente).
+            outCell.value = {
+              formula: nsTotalColSheet
+                ? `${totalBrutCol}${targetRow}+${nsTotalColSheet}${targetRow}`
+                : `${totalBrutCol}${targetRow}`,
+            };
+            outCell.numFmt = FMT_EUROS;
+          } else if (label === "Écart avec itsi (en €)" && totalColSheet && totalItsiCol) {
+            // = TOTAL - Total itsi : repère les écarts entre le total
+            // calculé ici et le total déjà calculé côté production.
+            outCell.value = { formula: `${totalColSheet}${targetRow}-${totalItsiCol}${targetRow}` };
+            outCell.numFmt = FMT_EUROS_4DP;
           } else {
             writeValue(outCell, val, label, srcCol, tgtCol, srcRow, targetRow, fullColmap, frozenStats);
           }
           outCell.fill = SECTION_DATA_FILL[fillSectionForSheetLabel(label)];
           const hasVal =
             useRateFormula ||
-            (label === "Total somme (en €)" && sheetSumCols.length) ||
-            (label === NS_TOTAL_LABEL && sheetNsSumCols.length) ||
+            (label === "Total brut (en €)" && sheetSumCols.length) ||
+            (label === SHEET_NS_TOTAL_LABEL && sheetNsSumCols.length) ||
+            (label === "TOTAL (en €)" && totalBrutCol) ||
+            (label === "Écart avec itsi (en €)" && totalColSheet && totalItsiCol) ||
             (val !== null && val !== undefined && val !== "");
           if (shouldSumForSubtotal(label) && hasVal) colsWithAmounts.add(tgtCol);
         }
