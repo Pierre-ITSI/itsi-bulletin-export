@@ -851,19 +851,50 @@ const HOUR_RATE_COEF = new Map(
 const SECTION_HEADER_FILL = {
   contrat: { type: "pattern", pattern: "solid", fgColor: { argb: "FFD3E5F7" } }, // bleu pastel
   paie: { type: "pattern", pattern: "solid", fgColor: { argb: "FFD6F0DB" } }, // vert pastel
-  paie_ns: { type: "pattern", pattern: "solid", fgColor: { argb: "FF8FCB9B" } }, // vert plus foncé (colonnes non soumises)
+  paie_ns: { type: "pattern", pattern: "solid", fgColor: { argb: "FFACD9B8" } }, // vert plus foncé (colonnes non soumises)
   mg: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF7D3E6" } }, // rose pastel
   totaux: { type: "pattern", pattern: "solid", fgColor: { argb: "FFE6D9F7" } }, // violet pastel
 };
 const SECTION_DATA_FILL = {
   contrat: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF3F8FD" } },
   paie: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF2FAF4" } },
-  paie_ns: { type: "pattern", pattern: "solid", fgColor: { argb: "FFC7E6CD" } }, // vert plus foncé (colonnes non soumises)
+  paie_ns: { type: "pattern", pattern: "solid", fgColor: { argb: "FFDCF0E1" } }, // vert plus foncé (colonnes non soumises)
   mg: { type: "pattern", pattern: "solid", fgColor: { argb: "FFFCEEF5" } },
   totaux: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF6F1FC" } },
 };
 const SECTION_BORDER = { style: "medium", color: { argb: "FFB0B0B0" } };
 const HEADER_BOTTOM_BORDER = { style: "thin", color: { argb: "FF999999" } };
+
+// Assombrit légèrement une couleur ARGB ("FFRRGGBB") d'un facteur (0-1) :
+// utilisé pour distinguer les lignes des contrats en abattement ("Oui"),
+// sans dupliquer à la main une palette de couleurs pour chaque zone.
+function darkenArgb(argb, factor) {
+  const clamp = (n) => Math.max(0, Math.min(255, Math.round(n)));
+  const hex2 = (n) => clamp(n).toString(16).padStart(2, "0").toUpperCase();
+  const r = parseInt(argb.slice(2, 4), 16);
+  const g = parseInt(argb.slice(4, 6), 16);
+  const b = parseInt(argb.slice(6, 8), 16);
+  return `${argb.slice(0, 2)}${hex2(r * factor)}${hex2(g * factor)}${hex2(b * factor)}`;
+}
+const ABATTEMENT_DARKEN_FACTOR = 0.88;
+const SECTION_DATA_FILL_ABATTEMENT = Object.fromEntries(
+  Object.entries(SECTION_DATA_FILL).map(([key, fill]) => [
+    key,
+    {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: darkenArgb(fill.fgColor.argb, ABATTEMENT_DARKEN_FACTOR) },
+    },
+  ])
+);
+const FILL_CONTRACT_ABATTEMENT = {
+  type: "pattern",
+  pattern: "solid",
+  fgColor: { argb: darkenArgb(FILL_CONTRACT.fgColor.argb, ABATTEMENT_DARKEN_FACTOR) },
+};
+function isAbattementOui(value) {
+  return normalizeLabel(String(value ?? "")) === "oui";
+}
 
 function isMgLabel(label) {
   const norm = normalizeLabel(label);
@@ -1075,6 +1106,7 @@ export async function buildOutput(headers, sourceRows, options) {
   const finCol = srcLetterForTargetLabel("Date de fin");
   const contratCol = srcLetterForTargetLabel("Code contrat (itsi)");
   const matriculeCol = srcLetterForTargetLabel("Matricule salarié production (itsi)");
+  const abattementCol = srcLetterForTargetLabel("Abattement");
 
   // Colonne cible "Taux horaire", et pour chaque libellé "(en €)" de
   // HOUR_RATE_COEF, colonne cible de son "(en h)" jumeau — seulement si les
@@ -1194,6 +1226,11 @@ export async function buildOutput(headers, sourceRows, options) {
     for (const group of contractGroups) {
       const groupFirstRow = currentRow;
       const colsWithAmounts = new Set();
+      // Assombrit légèrement les lignes (détail + sous-total) des contrats
+      // en abattement ("Oui"), pour les distinguer à la lecture.
+      const groupAbattementOui =
+        abattementCol && isAbattementOui(group.rows[0].data[abattementCol]);
+      const dataFillFor = groupAbattementOui ? SECTION_DATA_FILL_ABATTEMENT : SECTION_DATA_FILL;
 
       for (const { srcRow, data } of group.rows) {
         const targetRow = currentRow;
@@ -1231,7 +1268,7 @@ export async function buildOutput(headers, sourceRows, options) {
           } else {
             writeValue(outCell, val, label, srcCol, tgtCol, srcRow, targetRow, fullColmap, frozenStats);
           }
-          outCell.fill = SECTION_DATA_FILL[fillSectionForLabel(label)];
+          outCell.fill = dataFillFor[fillSectionForLabel(label)];
           const hasVal =
             useRateFormula ||
             (label === "Salaire brut (en €)" && brutSumCols.length) ||
@@ -1242,7 +1279,7 @@ export async function buildOutput(headers, sourceRows, options) {
         for (const { srcCol, tgtCol, label, derive } of derivedEntries) {
           const outCell = ws.getCell(targetRow, colIndexFromLetter(tgtCol));
           if (derive === "dates") outCell.value = formatWorkedDates(data[srcCol]);
-          outCell.fill = SECTION_DATA_FILL[fillSectionForLabel(label)];
+          outCell.fill = dataFillFor[fillSectionForLabel(label)];
         }
         currentRow += 1;
       }
@@ -1251,12 +1288,13 @@ export async function buildOutput(headers, sourceRows, options) {
       const sortedGroupCols = [...colsWithAmounts].sort(
         (a, b) => colIndexFromLetter(a) - colIndexFromLetter(b)
       );
+      const contractFill = groupAbattementOui ? FILL_CONTRACT_ABATTEMENT : FILL_CONTRACT;
 
       if (group.code) {
         const contractSubtotalRow = currentRow;
         ws.getCell(contractSubtotalRow, 1).value = `SOUS-TOTAL ${group.code}`;
         for (let c = 1; c <= nTotalCols; c++) {
-          ws.getCell(contractSubtotalRow, c).fill = FILL_CONTRACT;
+          ws.getCell(contractSubtotalRow, c).fill = contractFill;
         }
         ws.getCell(contractSubtotalRow, 1).font = FONT_CONTRACT;
         // Matricule du salarié, pour le repérer sans remonter aux lignes de
@@ -1271,7 +1309,7 @@ export async function buildOutput(headers, sourceRows, options) {
           const idx = colIndexFromLetter(tgtCol);
           const c = ws.getCell(contractSubtotalRow, idx);
           c.value = { formula: `SUM(${tgtCol}${groupFirstRow}:${tgtCol}${groupLastRow})` };
-          c.fill = FILL_CONTRACT;
+          c.fill = contractFill;
           c.numFmt = numFmtForLabel(labelOfTargetLetter[tgtCol]);
           (deptRefRows[tgtCol] ||= []).push(contractSubtotalRow);
         }

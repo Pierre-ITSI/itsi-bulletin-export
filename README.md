@@ -199,6 +199,13 @@ modifier un nombre d'heures recalcule aussi le salaire brut, comme le reste
 de l'outil. Elle remplace "Total somme", qui n'est plus reprise dans
 l'export.
 
+**Contrats en abattement** : les lignes (détail et sous-total) d'un contrat
+dont "Abattement" vaut "Oui" sont légèrement assombries (`darkenArgb()`,
+`SECTION_DATA_FILL_ABATTEMENT`/`FILL_CONTRACT_ABATTEMENT` dans
+`src/generator.js`), pour les repérer d'un coup d'œil sans changer la
+palette de couleurs par zone (chaque teinte reste assombrie dans sa propre
+famille).
+
 `Total non soumis` est également **calculée** : formule SOMME de
 l'ensemble des colonnes "non soumises" en euros de la ligne — repérées soit
 par l'abréviation "(NS)" (ex. "Indem. Matériel (NS)"), soit en toutes

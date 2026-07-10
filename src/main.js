@@ -5,7 +5,7 @@ const app = document.querySelector("#app");
 
 const FILE_TYPES = {
   combine: {
-    label: "Combine (bulletins de paie)",
+    label: "Bulletin",
     subtitle:
       "Déposer un fichier d'export de Bulletins excel extrait d'itsi-production, " +
       "pour obtenir un fichier consolidé, regroupé par département et par " +
