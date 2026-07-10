@@ -876,7 +876,7 @@ function darkenArgb(argb, factor) {
   const b = parseInt(argb.slice(6, 8), 16);
   return `${argb.slice(0, 2)}${hex2(r * factor)}${hex2(g * factor)}${hex2(b * factor)}`;
 }
-const ABATTEMENT_DARKEN_FACTOR = 0.88;
+const ABATTEMENT_DARKEN_FACTOR = 0.96;
 const SECTION_DATA_FILL_ABATTEMENT = Object.fromEntries(
   Object.entries(SECTION_DATA_FILL).map(([key, fill]) => [
     key,
