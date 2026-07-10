@@ -175,7 +175,12 @@ verticale (`sectionForLabel()` / `columnPlan` dans `src/generator.js`) —
 l'ordre des colonnes suit ce même regroupement, pas seulement leur couleur :
 
 1. **Informations contrat** (bleu) : Code bulletin, Statut, Code contrat,
-   Nom, Prénom, Métier, dates, taux horaire…
+   Nom, Prénom, Métier, dates, taux horaire… "Taux horaire" est en format
+   euros (`FMT_TAUX`) mais **sans arrondi à 2 décimales** contrairement aux
+   autres colonnes euros : certains taux calculés côté production ont plus
+   de décimales significatives (ex. 68.0408999) qu'un format "#,##0.00"
+   masquerait à l'affichage — la valeur de la cellule, elle, n'a jamais été
+   tronquée.
 2. **Variables de paie** (vert) : Jours travaillés (dates), Jour(s)
    travaillés, toutes les colonnes heures/euros (H. normales, majorations,
    indemnités…), ainsi que les colonnes sans équivalent standard type

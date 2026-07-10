@@ -784,6 +784,12 @@ const FONT_DEPT = { name: "Arial", size: 8, italic: true };
 const FONT_CONTRACT = { name: "Arial", size: 8, italic: true };
 const FMT_HOURS = "#,##0.00";
 const FMT_EUROS = '#,##0.00"€"';
+// "Taux horaire" : format euros, mais sans arrondi à 2 décimales — certains
+// taux calculés côté production ont plus de décimales significatives (ex.
+// 68.0408999) qu'un simple "#,##0.00" masquerait à l'affichage (bien que la
+// valeur réelle de la cellule, elle, ne soit jamais tronquée). Les "#"
+// n'affichent un chiffre que s'il existe (pas de zéros de remplissage).
+const FMT_TAUX = '#,##0.##########"€"';
 const FMT_DATE = "dd/mm/yyyy";
 const CENTER = { horizontal: "center", vertical: "middle" };
 
@@ -1008,7 +1014,8 @@ function writeValue(cell, val, label, srcCol, tgtCol, srcRow, targetRow, colmap,
     cell.value = val === undefined ? null : val;
   }
 
-  if (labelIsHours(label)) cell.numFmt = FMT_HOURS;
+  if (label === "Taux horaire") cell.numFmt = FMT_TAUX;
+  else if (labelIsHours(label)) cell.numFmt = FMT_HOURS;
   else if (labelIsEuros(label)) cell.numFmt = FMT_EUROS;
 }
 
