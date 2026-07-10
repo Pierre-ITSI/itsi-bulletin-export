@@ -801,10 +801,10 @@ const IDENTITY_LABELS = new Set([
   "Prénom", "Abattement", "Métier", "Date de début", "Date de fin",
   "Taux horaire",
 ]);
-// Libellé de la colonne calculée "Total indemnité (NS)" (somme des colonnes
+// Libellé de la colonne calculée "Total non soumis" (somme des colonnes
 // "(NS)" euros, cf. isNsLabel) : constante partagée entre la construction du
 // plan de colonnes et l'écriture des lignes.
-const NS_TOTAL_LABEL = "Total indemnité (NS)";
+const NS_TOTAL_LABEL = "Total non soumis";
 const GROSS_TOTAL_LABELS = new Set([
   "Coût employeur (en h)", "Coût employeur (en €)",
   "Salaire brut (en h)", "Salaire brut (en €)",
@@ -851,12 +851,14 @@ const HOUR_RATE_COEF = new Map(
 const SECTION_HEADER_FILL = {
   contrat: { type: "pattern", pattern: "solid", fgColor: { argb: "FFD3E5F7" } }, // bleu pastel
   paie: { type: "pattern", pattern: "solid", fgColor: { argb: "FFD6F0DB" } }, // vert pastel
+  paie_ns: { type: "pattern", pattern: "solid", fgColor: { argb: "FF8FCB9B" } }, // vert plus foncé (colonnes non soumises)
   mg: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF7D3E6" } }, // rose pastel
   totaux: { type: "pattern", pattern: "solid", fgColor: { argb: "FFE6D9F7" } }, // violet pastel
 };
 const SECTION_DATA_FILL = {
   contrat: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF3F8FD" } },
   paie: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF2FAF4" } },
+  paie_ns: { type: "pattern", pattern: "solid", fgColor: { argb: "FFC7E6CD" } }, // vert plus foncé (colonnes non soumises)
   mg: { type: "pattern", pattern: "solid", fgColor: { argb: "FFFCEEF5" } },
   totaux: { type: "pattern", pattern: "solid", fgColor: { argb: "FFF6F1FC" } },
 };
@@ -874,7 +876,7 @@ function isTotalSommeLabel(label) {
 
 // Colonnes "non soumises" (abrégées "(NS)", ex. "Indem. Matériel (NS)", ou
 // en toutes lettres, ex. "Déf. non soumis"). Exclues de la somme "Salaire
-// brut" et regroupées à part dans "Total indemnité (NS)".
+// brut" et regroupées à part dans "Total non soumis".
 function isNsLabel(label) {
   return /\(ns\)/i.test(label) || /non soumis/i.test(label);
 }
@@ -884,6 +886,17 @@ function sectionForLabel(label) {
   if (GROSS_TOTAL_LABELS.has(label) || isTotalSommeLabel(label)) return "totaux";
   if (isMgLabel(label)) return "mg";
   return "paie";
+}
+
+// Purement visuel : distingue les colonnes "non soumises" par un vert plus
+// foncé au sein de la zone "paie", pour mieux les repérer à la lecture. Ne
+// change ni la classification logique (sectionForLabel reste "paie" pour
+// ces colonnes : sous-totaux, bordures de zone…), ni `sectionOfIndex` (les
+// colonnes "non soumises" ne sont pas forcément contiguës, cf. l'ordre du
+// fichier source).
+function fillSectionForLabel(label) {
+  const section = sectionForLabel(label);
+  return section === "paie" && isNsLabel(label) ? "paie_ns" : section;
 }
 
 function labelIsHours(label) {
@@ -955,7 +968,7 @@ export async function buildOutput(headers, sourceRows, options) {
     ([, label]) => !isMgLabel(label) && !isTotalSommeLabel(label)
   );
   // Colonnes "(NS)" en euros présentes dans le fichier déposé : condition la
-  // présence de la colonne calculée "Total indemnité (NS)" en toute fin de
+  // présence de la colonne calculée "Total non soumis" en toute fin de
   // tableau (pas de colonne "au cas où" si le fichier n'en a aucune).
   const hasNsEuroCol = extraEntries.some(
     ([, label]) => isNsLabel(label) && labelIsEuros(label)
@@ -968,7 +981,7 @@ export async function buildOutput(headers, sourceRows, options) {
   // les colonnes sans équivalent standard (Cachet, Déf., Indem.…), puis les
   // anciennes colonnes de travail Garantie Minimale, puis les totaux bruts
   // (Salaire brut, Coût employeur, Salaire net imposable, Salaire net), puis
-  // "Total indemnité (NS)" (calculée) en toute dernière colonne.
+  // "Total non soumis" (calculée) en toute dernière colonne.
   const activePayEntries = [];
   for (const label of activePayLabels) {
     if (label === "Jour(s) travaillés" && labelToSrcCol[label]) {
@@ -1049,7 +1062,7 @@ export async function buildOutput(headers, sourceRows, options) {
     .map(({ srcCol }) => targetLetterOf[srcCol]);
 
   // Colonnes "(NS)" en euros de la zone paie : sommées séparément dans
-  // "Total indemnité (NS)" plutôt que dans "Salaire brut".
+  // "Total non soumis" plutôt que dans "Salaire brut".
   const nsSumCols = columnPlan
     .filter(({ label }) => sectionForLabel(label) === "paie" && labelIsEuros(label) && isNsLabel(label))
     .map(({ srcCol }) => targetLetterOf[srcCol]);
@@ -1115,7 +1128,7 @@ export async function buildOutput(headers, sourceRows, options) {
     cell.value = label;
     cell.font = FONT_LABEL_BOLD;
     cell.alignment = { ...CENTER, wrapText: true };
-    cell.fill = SECTION_HEADER_FILL[sectionOfIndex[idx]];
+    cell.fill = SECTION_HEADER_FILL[fillSectionForLabel(label)];
     cell.border = { bottom: HEADER_BOTTOM_BORDER };
     ws.getColumn(idx).width = widthForLabel(label);
   });
@@ -1218,7 +1231,7 @@ export async function buildOutput(headers, sourceRows, options) {
           } else {
             writeValue(outCell, val, label, srcCol, tgtCol, srcRow, targetRow, fullColmap, frozenStats);
           }
-          outCell.fill = SECTION_DATA_FILL[sectionOfLetter[tgtCol]];
+          outCell.fill = SECTION_DATA_FILL[fillSectionForLabel(label)];
           const hasVal =
             useRateFormula ||
             (label === "Salaire brut (en €)" && brutSumCols.length) ||
@@ -1226,10 +1239,10 @@ export async function buildOutput(headers, sourceRows, options) {
             (val !== null && val !== undefined && val !== "");
           if (shouldSumForSubtotal(label) && hasVal) colsWithAmounts.add(tgtCol);
         }
-        for (const { srcCol, tgtCol, derive } of derivedEntries) {
+        for (const { srcCol, tgtCol, label, derive } of derivedEntries) {
           const outCell = ws.getCell(targetRow, colIndexFromLetter(tgtCol));
           if (derive === "dates") outCell.value = formatWorkedDates(data[srcCol]);
-          outCell.fill = SECTION_DATA_FILL[sectionOfLetter[tgtCol]];
+          outCell.fill = SECTION_DATA_FILL[fillSectionForLabel(label)];
         }
         currentRow += 1;
       }
@@ -1246,6 +1259,13 @@ export async function buildOutput(headers, sourceRows, options) {
           ws.getCell(contractSubtotalRow, c).fill = FILL_CONTRACT;
         }
         ws.getCell(contractSubtotalRow, 1).font = FONT_CONTRACT;
+        // Matricule du salarié, pour le repérer sans remonter aux lignes de
+        // détail (toutes les lignes d'un même groupe de contrat partagent le
+        // même matricule).
+        if (matriculeCol && targetLetterOf[matriculeCol]) {
+          const matriculeIdx = colIndexFromLetter(targetLetterOf[matriculeCol]);
+          ws.getCell(contractSubtotalRow, matriculeIdx).value = group.rows[0].data[matriculeCol];
+        }
 
         for (const tgtCol of sortedGroupCols) {
           const idx = colIndexFromLetter(tgtCol);
@@ -1416,6 +1436,13 @@ function sectionForSheetLabel(label) {
   return "paie";
 }
 
+// Équivalent de fillSectionForLabel (Combine) pour l'export "Feuille" : vert
+// plus foncé pour les colonnes "non soumises" au sein de la zone "paie".
+function fillSectionForSheetLabel(label) {
+  const section = sectionForSheetLabel(label);
+  return section === "paie" && isSheetNsLabel(label) ? "paie_ns" : section;
+}
+
 function numFmtForSheetLabel(label) {
   if (label === NS_TOTAL_LABEL) return FMT_EUROS;
   if (labelIsEuros(label)) return FMT_EUROS;
@@ -1553,7 +1580,7 @@ export async function buildSheetOutput(headers, sourceRows, options) {
     cell.value = label;
     cell.font = FONT_LABEL_BOLD;
     cell.alignment = { ...CENTER, wrapText: true };
-    cell.fill = SECTION_HEADER_FILL[sectionOfIndex[idx]];
+    cell.fill = SECTION_HEADER_FILL[fillSectionForSheetLabel(label)];
     cell.border = { bottom: HEADER_BOTTOM_BORDER };
     ws.getColumn(idx).width = widthForLabel(label);
   });
@@ -1641,7 +1668,7 @@ export async function buildSheetOutput(headers, sourceRows, options) {
           } else {
             writeValue(outCell, val, label, srcCol, tgtCol, srcRow, targetRow, fullColmap, frozenStats);
           }
-          outCell.fill = SECTION_DATA_FILL[sectionOfLetter[tgtCol]];
+          outCell.fill = SECTION_DATA_FILL[fillSectionForSheetLabel(label)];
           const hasVal =
             useRateFormula ||
             (label === "Total somme (en €)" && sheetSumCols.length) ||

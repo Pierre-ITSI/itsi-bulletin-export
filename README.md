@@ -122,7 +122,10 @@ recoupent jamais (pas de double comptage) :
 
 - **Par contrat** (`Code contrat`) : chaque contrat (dès qu'il a un code) a
   sa ligne de sous-total, même s'il n'a qu'un seul bulletin sur la période —
-  cela permet de repérer chaque contrat d'un coup d'œil dans le tableau.
+  cela permet de repérer chaque contrat d'un coup d'œil dans le tableau. La
+  ligne reprend aussi le **matricule** du salarié (même matricule pour
+  toutes les lignes d'un même contrat), pour l'identifier sans remonter aux
+  lignes de détail.
 - **Par département** : somme des sous-totaux contrat du département.
 - **Total général** : somme des sous-totaux de département.
 
@@ -176,12 +179,16 @@ l'ordre des colonnes suit ce même regroupement, pas seulement leur couleur :
 2. **Variables de paie** (vert) : Jours travaillés (dates), Jour(s)
    travaillés, toutes les colonnes heures/euros (H. normales, majorations,
    indemnités…), ainsi que les colonnes sans équivalent standard type
-   Cachet/Déf./Indem.
+   Cachet/Déf./Indem. Les colonnes "non soumises" (`isNsLabel()`, ex.
+   "Indem. Matériel (NS)", "Déf. non soumis") sont dans un **vert plus
+   foncé** (`fillSectionForLabel()`) pour les distinguer à la lecture, tout
+   en restant dans cette même zone (mêmes bordures, mêmes règles de
+   sous-total).
 3. **Garantie Minimale** (rose) : les anciennes colonnes de travail Total
    base/MG/Ratio MG/Supp ap. MG, juste avant les totaux.
 4. **Totaux bruts** (violet), **toujours en toutes dernières colonnes** :
    Salaire brut, Coût employeur, Salaire net imposable, Salaire net, puis
-   "Total indemnité (NS)" si le fichier déposé contient au moins une colonne
+   "Total non soumis" si le fichier déposé contient au moins une colonne
    "non soumise" (ex. "Indem. Matériel (NS)", "Déf. non soumis") — sinon
    cette dernière colonne n'apparaît pas.
 
@@ -192,7 +199,7 @@ modifier un nombre d'heures recalcule aussi le salaire brut, comme le reste
 de l'outil. Elle remplace "Total somme", qui n'est plus reprise dans
 l'export.
 
-`Total indemnité (NS)` est également **calculée** : formule SOMME de
+`Total non soumis` est également **calculée** : formule SOMME de
 l'ensemble des colonnes "non soumises" en euros de la ligne — repérées soit
 par l'abréviation "(NS)" (ex. "Indem. Matériel (NS)"), soit en toutes
 lettres (ex. "Déf. non soumis") — via `isNsLabel()` / `nsSumCols` dans
