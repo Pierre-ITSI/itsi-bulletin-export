@@ -200,11 +200,13 @@ de l'outil. Elle remplace "Total somme", qui n'est plus reprise dans
 l'export.
 
 **Contrats en abattement** : les lignes (détail et sous-total) d'un contrat
-dont "Abattement" vaut "Oui" sont légèrement assombries (`darkenArgb()`,
+dont "Abattement" vaut "Oui" sont légèrement assombries et légèrement plus
+saturées (`darkenArgb()`/`saturateArgb()`,
 `SECTION_DATA_FILL_ABATTEMENT`/`FILL_CONTRACT_ABATTEMENT` dans
 `src/generator.js`), pour les repérer d'un coup d'œil sans changer la
-palette de couleurs par zone (chaque teinte reste assombrie dans sa propre
-famille).
+palette de couleurs par zone (chaque teinte "ressort" dans sa propre
+famille plutôt que de virer au gris — la bande grise des sous-totaux
+contrat, elle, reste neutre : seul l'assombrissement s'y applique).
 
 `Total non soumis` est également **calculée** : formule SOMME de
 l'ensemble des colonnes "non soumises" en euros de la ligne — repérées soit

@@ -876,14 +876,56 @@ function darkenArgb(argb, factor) {
   const b = parseInt(argb.slice(6, 8), 16);
   return `${argb.slice(0, 2)}${hex2(r * factor)}${hex2(g * factor)}${hex2(b * factor)}`;
 }
+// Sature une couleur ARGB ("FFRRGGBB") via un aller-retour HSL : contrairement
+// à un simple assombrissement, ça fait "ressortir" la teinte (bleu/vert/rose/
+// violet) plutôt que de tirer vers le gris — plus lisible pour distinguer les
+// lignes des contrats en abattement sans les assombrir davantage.
+function saturateArgb(argb, boost) {
+  const clamp01 = (n) => Math.max(0, Math.min(1, n));
+  const hex2 = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0").toUpperCase();
+  const r = parseInt(argb.slice(2, 4), 16) / 255;
+  const g = parseInt(argb.slice(4, 6), 16) / 255;
+  const b = parseInt(argb.slice(6, 8), 16) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return argb; // gris neutre : pas de teinte à saturer
+  const d = max - min;
+  const s = clamp01((l > 0.5 ? d / (2 - max - min) : d / (max + min)) + boost);
+  let h;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+  else if (max === g) h = ((b - r) / d + 2) / 6;
+  else h = ((r - g) / d + 4) / 6;
+  const hue2rgb = (p, q, t) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const nr = hue2rgb(p, q, h + 1 / 3) * 255;
+  const ng = hue2rgb(p, q, h) * 255;
+  const nb = hue2rgb(p, q, h - 1 / 3) * 255;
+  return `${argb.slice(0, 2)}${hex2(nr)}${hex2(ng)}${hex2(nb)}`;
+}
+
 const ABATTEMENT_DARKEN_FACTOR = 0.96;
+const ABATTEMENT_SATURATION_BOOST = 0.16;
 const SECTION_DATA_FILL_ABATTEMENT = Object.fromEntries(
   Object.entries(SECTION_DATA_FILL).map(([key, fill]) => [
     key,
     {
       type: "pattern",
       pattern: "solid",
-      fgColor: { argb: darkenArgb(fill.fgColor.argb, ABATTEMENT_DARKEN_FACTOR) },
+      fgColor: {
+        argb: saturateArgb(
+          darkenArgb(fill.fgColor.argb, ABATTEMENT_DARKEN_FACTOR),
+          ABATTEMENT_SATURATION_BOOST
+        ),
+      },
     },
   ])
 );
