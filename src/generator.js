@@ -1454,16 +1454,30 @@ export async function generate(sourceArrayBuffer, options) {
 // colonnes non soumises), "TOTAL" (calculée, = Total brut + Total
 // indemnité (NS)), "Total itsi" (recopiée telle quelle depuis le fichier
 // source, total déjà calculé côté production), "Écart avec itsi" (calculée,
-// = TOTAL - Total itsi, pour repérer les écarts de calcul). Pas de "Code
-// contrat" non plus : le regroupement par contrat se fait donc sur
-// "Matricule", qui sert aussi au tri/regroupement par département (même
-// mécanisme et même dictionnaire METIER_TO_DEPT que
-// côté Combine, "Métier" désignant le même référentiel des deux côtés).
+// = TOTAL - Total itsi, pour repérer les écarts de calcul).
+//
+// "Code contrat" (identité, zone bleue) et "Jour(s) travaillés" (zone verte,
+// même mécanisme que côté Combine : `countJours()` sur une liste de dates
+// séparées par ";") sont désormais repris si le fichier déposé les contient
+// — colonnes ajoutées côté production sur le même principe que l'export
+// Combine (cf. docblock `SHEET_STANDARD_HEADERS`/`countJours` plus bas pour
+// le contrat exact attendu sur la donnée source). Le regroupement par
+// contrat se fait sur "Code contrat" quand il est présent, avec repli sur
+// "Matricule" sinon (anciens fichiers sans cette colonne) ; le tri/
+// regroupement par département reste basé sur "Matricule" dans tous les cas
+// (même mécanisme et même dictionnaire METIER_TO_DEPT que côté Combine,
+// "Métier" désignant le même référentiel des deux côtés).
 
+// "Code contrat" : pas encore présent dans SheetExcelExport à ce jour,
+// prévu côté production via la même requête que côté Combine (colonne
+// "Code contrat" là-bas aussi) — repris ici par simple correspondance de
+// libellé dès qu'il apparaîtra dans le fichier déposé, sans renommage (le
+// format cible Feuille garde le nom "Code contrat", contrairement à Combine
+// qui le renomme en "Code contrat (itsi)").
 const SHEET_IDENTITY_LABELS_LIST = [
-  "Code feuille", "Code RH", "Nom", "Prénom", "Email", "Matricule",
-  "Métier", "Semaine", "Date de début", "Date de fin", "Contrat",
-  "Taux horaire", "Base horaire", "Tournage ou préparation",
+  "Code feuille", "Code RH", "Code contrat", "Nom", "Prénom", "Email",
+  "Matricule", "Métier", "Semaine", "Date de début", "Date de fin",
+  "Contrat", "Taux horaire", "Base horaire", "Tournage ou préparation",
   "Heure(s) équivalence", "Statut",
 ];
 const SHEET_IDENTITY_LABELS = new Set(SHEET_IDENTITY_LABELS_LIST);
@@ -1489,8 +1503,19 @@ const SHEET_REM_CODES = [
 // garde le nom d'origine "Total indemnité (NS)".
 const SHEET_NS_TOTAL_LABEL = "Total indemnité (NS)";
 
+// "Jour(s) travaillés" : pas encore présent dans SheetExcelExport à ce
+// jour, prévu côté production en comptant les SheetDay dont le temps
+// travaillé (WorkedQuantity/WorkedMinutes) est non nul. Repris ici avec
+// EXACTEMENT le même contrat de données que côté Combine — même libellé,
+// et valeur source = liste des dates travaillées séparées par ";" (pas un
+// entier déjà compté), pour réutiliser tel quel `countJours()`/`writeValue`
+// (qui traite spécifiquement ce libellé) sans aucun code dédié Feuille. Si
+// la donnée exposée côté production est finalement un entier brut plutôt
+// qu'une liste de dates, il faudra soit l'exposer sous un autre libellé,
+// soit adapter `writeValue`.
 const SHEET_STANDARD_HEADERS = [
   ...SHEET_IDENTITY_LABELS_LIST,
+  "Jour(s) travaillés",
   ...SHEET_REM_CODES.flatMap((code) => [`${code} (en h)`, `${code} (en €)`]),
   "Total brut (en €)",
   "Total itsi (en €)",
@@ -1561,6 +1586,7 @@ function numFmtForSheetLabel(label) {
   if (label === "Écart avec itsi (en €)") return FMT_EUROS_4DP;
   if (labelIsEuros(label) || SHEET_TOTAUX_LABELS.has(label)) return FMT_EUROS;
   if (labelIsHours(label)) return FMT_HOURS;
+  if (label === "Jour(s) travaillés") return "0";
   return "General";
 }
 
@@ -1656,6 +1682,7 @@ export async function buildSheetOutput(headers, sourceRows, options) {
   const debutCol = srcLetterForTargetLabel("Date de début");
   const finCol = srcLetterForTargetLabel("Date de fin");
   const matriculeCol = srcLetterForTargetLabel("Matricule");
+  const contratCol = srcLetterForTargetLabel("Code contrat");
 
   const tauxCol = labelToSrcCol["Taux horaire"]
     ? targetLetterOf[labelToSrcCol["Taux horaire"]]
@@ -1751,11 +1778,14 @@ export async function buildSheetOutput(headers, sourceRows, options) {
     deptCell.font = FONT_DEPT;
     currentRow += 1;
 
-    // Regroupe les lignes consécutives partageant le même matricule (pas de
-    // code contrat dans cet export : le matricule identifie le poste/contrat).
+    // Regroupe les lignes consécutives partageant le même code contrat
+    // (comme côté Combine), si le fichier déposé contient cette colonne ;
+    // sinon repli sur le matricule (pas de code contrat dans les anciens
+    // exports "Feuille", le matricule identifie alors le poste/contrat).
+    const groupKeyCol = contratCol || matriculeCol;
     const contractGroups = [];
     for (const entry of entries) {
-      const code = matriculeCol ? entry.data[matriculeCol] : undefined;
+      const code = groupKeyCol ? entry.data[groupKeyCol] : undefined;
       const hasCode = code !== undefined && code !== null && code !== "";
       const last = contractGroups[contractGroups.length - 1];
       if (last && hasCode && last.code === code) {
@@ -1838,11 +1868,11 @@ export async function buildSheetOutput(headers, sourceRows, options) {
           ws.getCell(contractSubtotalRow, c).fill = FILL_CONTRACT;
         }
         ws.getCell(contractSubtotalRow, 1).font = FONT_CONTRACT;
-        // Matricule du salarié (même mécanisme que côté Combine) : ici
-        // group.code EST déjà le matricule (regroupement par matricule,
-        // pas de code contrat dans cet export), donc redondant avec le
-        // libellé "SOUS-TOTAL <matricule>" mais garde la colonne Matricule
-        // cohérente avec le reste de la ligne.
+        // Matricule du salarié (même mécanisme que côté Combine) : utile
+        // pour identifier le salarié sans remonter aux lignes de détail —
+        // redondant avec le libellé "SOUS-TOTAL <code>" seulement dans le
+        // cas de repli (pas de "Code contrat" dans le fichier, group.code
+        // est alors déjà le matricule).
         if (matriculeCol && targetLetterOf[matriculeCol]) {
           const matriculeIdx = colIndexFromLetter(targetLetterOf[matriculeCol]);
           ws.getCell(contractSubtotalRow, matriculeIdx).value = group.rows[0].data[matriculeCol];

@@ -32,10 +32,12 @@ formats source différents :
   "Salaire net imposable/net".
 - **Feuille** (`generateSheet()` / `buildSheetOutput()`) : export de
   relevés d'heures hebdomadaires (`SheetExcelExport` côté production, une
-  ligne par relevé/semaine), regroupement par **matricule** (pas de code
-  contrat dans cet export). Pas de section Garantie Minimale ni de "Jour(s)
-  travaillés". La zone totaux comporte 5 colonnes (voir
-  `Totaux côté Feuille` plus bas) au lieu de 4-5 côté Combine.
+  ligne par relevé/semaine). Pas de section Garantie Minimale. La zone
+  totaux comporte 5 colonnes (voir `Totaux côté Feuille` plus bas) au lieu
+  de 4-5 côté Combine. "Code contrat" et "Jour(s) travaillés" ne sont
+  **pas encore** fournis par `SheetExcelExport` à ce jour — voir
+  `Colonnes "Code contrat" / "Jour(s) travaillés" côté Feuille` plus bas
+  pour le contrat de données attendu une fois ajoutés côté production.
 
 Les deux partagent : la résolution de colonnes par nom (`resolveColumnMapping()`,
 paramétrable par format cible), le classement des métiers par département
@@ -213,6 +215,36 @@ couleurs, formats) depuis un fichier d'export réel de référence :
 Chaque colonne n'apparaît que si les colonnes source dont elle dépend sont
 présentes dans le fichier déposé (ex. pas de "Total itsi"/"Écart avec
 itsi" si le fichier source ne contient pas "Total itsi").
+
+## Colonnes "Code contrat" / "Jour(s) travaillés" côté Feuille
+
+Ni "Code contrat" ni "Jour(s) travaillés" ne sont fournis par
+`SheetExcelExport` à ce jour ; les deux sont prévues côté production
+(même requête que "Code contrat" côté Combine pour la première, comptage
+des `SheetDay` dont le temps travaillé — `WorkedQuantity`/`WorkedMinutes`
+— est non nul pour la seconde). Le générateur "Feuille" les reprend déjà,
+prêtes à fonctionner **dès qu'elles apparaîtront dans le fichier
+déposé**, sous réserve que la donnée source respecte le contrat suivant :
+
+- **"Code contrat"** (zone bleue, identité) : simple colonne texte, reprise
+  par correspondance de libellé (pas de renommage, contrairement à Combine
+  qui affiche "Code contrat (itsi)"). Dès qu'elle est présente, le
+  regroupement des sous-totaux (par contrat, dans `buildSheetOutput()`)
+  bascule sur cette colonne au lieu du matricule — comme côté Combine, un
+  même matricule avec deux codes contrat différents (deux lignes
+  consécutives) donne alors deux sous-totaux distincts plutôt qu'un seul.
+  Sans cette colonne, le comportement actuel (regroupement par matricule)
+  reste inchangé.
+- **"Jour(s) travaillés"** (zone verte, variables de paie) : même contrat
+  de données que côté Combine, càd **pas un entier déjà compté**, mais une
+  liste de dates travaillées séparées par ";" (ex.
+  "2026-06-01;2026-06-02"), pour réutiliser telles quelles les fonctions
+  déjà partagées (`countJours()`/`writeValue()`), sans code dédié côté
+  Feuille. **Si la donnée finalement exposée côté production est un entier
+  brut plutôt qu'une liste de dates, `writeValue()` devra être adapté**
+  (ou la colonne source exposée sous un autre libellé) — ce README sera
+  mis à jour en conséquence dès qu'un fichier réel contenant cette colonne
+  sera disponible pour vérification.
 
 ## Mise en forme et ordre des colonnes
 
