@@ -42,10 +42,19 @@ Les deux partagent : la résolution de colonnes par nom (`resolveColumnMapping()
 paramétrable par format cible), le classement des métiers par département
 (`METIER_TO_DEPT`/`classifyMetier()` — même référentiel des deux côtés,
 "Métier" désignant le même champ), le tri par matricule
-(`compareMatricules()`), les sections de couleur, les sous-totaux, et le
-calcul "taux horaire x coefficient x heures" pour les variables concernées
-(cf. `Colonnes calculées` plus bas — indexé par libellé court côté Combine,
-par code brut côté Feuille, `SHEET_HOUR_RATE_COEF`).
+(`compareMatricules()`), les sections de couleur (dont le vert plus foncé
+des colonnes "non soumises", `fillSectionForLabel()`/
+`fillSectionForSheetLabel()`), le renommage "Total non soumis", le
+matricule affiché sur les lignes de sous-total contrat, le format euros
+sans arrondi de "Taux horaire" (`FMT_TAUX`), les sous-totaux, et le calcul
+"taux horaire x coefficient x heures" pour les variables concernées (cf.
+`Colonnes calculées` plus bas — indexé par libellé court côté Combine, par
+code brut côté Feuille, `SHEET_HOUR_RATE_COEF`).
+
+**Différence assumée** : l'assombrissement/saturation des lignes en
+abattement (cf. `Contrats en abattement` plus bas) n'existe que côté
+Combine — l'export "Feuille" (`SheetExcelExport::headings()`) ne contient
+pas de colonne "Abattement", il n'y a donc rien à détecter.
 
 Le générateur "Feuille" a été construit uniquement à partir des colonnes
 définies dans `SheetExcelExport::headings()`/`format()` (fourni en

@@ -1778,6 +1778,15 @@ export async function buildSheetOutput(headers, sourceRows, options) {
           ws.getCell(contractSubtotalRow, c).fill = FILL_CONTRACT;
         }
         ws.getCell(contractSubtotalRow, 1).font = FONT_CONTRACT;
+        // Matricule du salarié (même mécanisme que côté Combine) : ici
+        // group.code EST déjà le matricule (regroupement par matricule,
+        // pas de code contrat dans cet export), donc redondant avec le
+        // libellé "SOUS-TOTAL <matricule>" mais garde la colonne Matricule
+        // cohérente avec le reste de la ligne.
+        if (matriculeCol && targetLetterOf[matriculeCol]) {
+          const matriculeIdx = colIndexFromLetter(targetLetterOf[matriculeCol]);
+          ws.getCell(contractSubtotalRow, matriculeIdx).value = group.rows[0].data[matriculeCol];
+        }
 
         for (const tgtCol of sortedGroupCols) {
           const idx = colIndexFromLetter(tgtCol);
