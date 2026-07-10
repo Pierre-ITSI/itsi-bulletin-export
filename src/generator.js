@@ -913,7 +913,7 @@ function saturateArgb(argb, boost) {
 }
 
 const ABATTEMENT_DARKEN_FACTOR = 0.96;
-const ABATTEMENT_SATURATION_BOOST = 0.24;
+const ABATTEMENT_SATURATION_BOOST = 0.6;
 const SECTION_DATA_FILL_ABATTEMENT = Object.fromEntries(
   Object.entries(SECTION_DATA_FILL).map(([key, fill]) => [
     key,
