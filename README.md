@@ -299,6 +299,18 @@ les autres codes du même groupe réellement présents restent contigus
 entre eux (aucune colonne étrangère ne peut jamais s'intercaler, puisque
 l'ordre de sortie suit toujours l'ordre canonique).
 
+**Colonnes-espace entre les groupes** (`activePayEntriesWithSpacers`,
+`groupIndexForLabel()`) : dans l'ordre canonique, ces 3 groupes sont
+directement adjacents les uns aux autres (aucun code non groupé entre
+eux) — sans rien de plus, Excel ne voit qu'un seul bloc replié et
+n'affiche qu'un **unique** bouton +/- pour les 3 groupes au lieu d'un par
+groupe (chaque groupe Excel doit être séparé du suivant par au moins une
+colonne hors groupe pour obtenir des boutons distincts). Une colonne fine
+(largeur 2, sans en-tête ni donnée, `label: null` dans `columnPlan`) est
+donc insérée automatiquement entre deux groupes directement adjacents —
+jamais entre un groupe et une colonne déjà non groupée, où la séparation
+existe déjà naturellement.
+
 Cette fonctionnalité est propre à l'export "Feuille" (elle n'existe ni
 côté Combine, ni côté Feuille détaillée, pas demandée à ce jour) — mais
 les 3 groupes de codes (`SHEET_COLUMN_GROUPS`) sont définis une seule

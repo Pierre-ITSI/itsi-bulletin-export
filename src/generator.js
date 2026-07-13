@@ -990,10 +990,10 @@ function fillSectionForLabel(label) {
 }
 
 function labelIsHours(label) {
-  return label.endsWith("(en h)");
+  return !!label && label.endsWith("(en h)");
 }
 function labelIsEuros(label) {
-  return label.endsWith("(en €)");
+  return !!label && label.endsWith("(en €)");
 }
 
 function writeValue(cell, val, label, srcCol, tgtCol, srcRow, targetRow, colmap, frozenStats) {
@@ -1662,7 +1662,21 @@ const SHEET_GROUPABLE_SHORT_LABELS = new Set(
   SHEET_COLUMN_GROUPS.flat().map((code) => REM_CODE_TO_SHORT_LABEL.get(code))
 );
 function isGroupableLabel(label) {
-  return SHEET_GROUPABLE_SHORT_LABELS.has(label.replace(/ \(en [h€]\)$/, ""));
+  return !!label && SHEET_GROUPABLE_SHORT_LABELS.has(label.replace(/ \(en [h€]\)$/, ""));
+}
+// Index (0/1/2) du groupe auquel appartient une colonne, ou -1 si elle
+// n'est dans aucun groupe. Sert à repérer les transitions D'UN GROUPE À UN
+// AUTRE GROUPE DIFFÉRENT sans colonne non groupée entre les deux : les 3
+// groupes sont des blocs contigus les uns par rapport aux autres dans
+// SHEET_REM_CATEGORIES (rien ne les sépare naturellement), donc sans
+// colonne-espace insérée entre eux, Excel les affiche comme un seul et
+// même groupe replié (un seul bouton +/-) plutôt que 3 distincts.
+function groupIndexForLabel(label) {
+  if (!label) return -1;
+  const base = label.replace(/ \(en [h€]\)$/, "");
+  return SHEET_COLUMN_GROUPS.findIndex((codes) =>
+    codes.some((code) => REM_CODE_TO_SHORT_LABEL.get(code) === base)
+  );
 }
 // "Vide" pour la décision de masquage d'une colonne groupée : valeur
 // absente, ou nombre valant explicitement 0 (contrairement à `hasVal` dans
@@ -1737,6 +1751,32 @@ export async function buildSheetOutput(headers, sourceRows, options) {
   const SHEET_TOTAL_SRC = "__SHEET_TOTAL__";
   const SHEET_ECART_SRC = "__SHEET_ECART__";
 
+  // Colonnes-espace (aucune donnée, `label: null`) insérées entre deux
+  // groupes repliables DIFFÉRENTS directement adjacents (cf.
+  // `groupIndexForLabel` / `SHEET_COLUMN_GROUPS`) : sans elles, Excel ne
+  // voit qu'un seul bloc contigu et n'affiche qu'un unique bouton +/- pour
+  // les 3 groupes au lieu d'un par groupe. Aucune colonne-espace n'est
+  // ajoutée là où une colonne non groupée sépare déjà naturellement deux
+  // groupes.
+  const activePayEntriesWithSpacers = [];
+  let lastGroupSeenWithoutBreak = -1;
+  let spacerCount = 0;
+  for (const label of activePayLabels) {
+    const g = groupIndexForLabel(label);
+    if (g === -1) {
+      lastGroupSeenWithoutBreak = -1;
+    } else {
+      if (lastGroupSeenWithoutBreak !== -1 && g !== lastGroupSeenWithoutBreak) {
+        activePayEntriesWithSpacers.push({
+          label: null,
+          srcCol: `__SHEET_GROUP_SPACER_${spacerCount++}__`,
+        });
+      }
+      lastGroupSeenWithoutBreak = g;
+    }
+    activePayEntriesWithSpacers.push({ label, srcCol: labelToSrcCol[label] });
+  }
+
   // Ordre des colonnes de totaux (cf. fichier de référence Feuille) :
   // "Total brut" (calculée, exclut les colonnes non soumises), "Total
   // indemnité (NS)" (calculée, uniquement les colonnes non soumises — si
@@ -1745,7 +1785,7 @@ export async function buildSheetOutput(headers, sourceRows, options) {
   // itsi" (calculée, = TOTAL - Total itsi, pour repérer les écarts de
   // calcul avec le total déjà calculé côté production).
   const columnPlan = [
-    ...activePayLabels.map((label) => ({ label, srcCol: labelToSrcCol[label] })),
+    ...activePayEntriesWithSpacers,
     ...extraEntries.map(([srcCol, label]) => ({ label, srcCol })),
     ...(hasTotalBrut ? [{ label: "Total brut (en €)", srcCol: labelToSrcCol["Total brut (en €)"] }] : []),
     ...(hasTotalBrut && hasNsEuroCol ? [{ label: SHEET_NS_TOTAL_LABEL, srcCol: SHEET_NS_TOTAL_SRC }] : []),
@@ -1853,6 +1893,13 @@ export async function buildSheetOutput(headers, sourceRows, options) {
   const headerRow = 4;
   columnPlan.forEach(({ label }, i) => {
     const idx = i + 1;
+    // Colonne-espace (cf. `activePayEntriesWithSpacers`) : ni valeur, ni
+    // couleur, ni bordure — juste une colonne fine pour séparer deux
+    // groupes repliables adjacents.
+    if (label === null) {
+      ws.getColumn(idx).width = 2;
+      return;
+    }
     const cell = ws.getCell(headerRow, idx);
     cell.value = label;
     cell.font = FONT_LABEL_BOLD;
@@ -1925,8 +1972,9 @@ export async function buildSheetOutput(headers, sourceRows, options) {
       for (const { srcRow, data } of group.rows) {
         const targetRow = currentRow;
         for (const [srcCol, tgtCol] of Object.entries(targetLetterOf)) {
-          const val = data[srcCol];
           const label = targetLabelOf[srcCol];
+          if (label === null) continue; // colonne-espace entre 2 groupes : rien à écrire
+          const val = data[srcCol];
           const tgtIdx = colIndexFromLetter(tgtCol);
           const outCell = ws.getCell(targetRow, tgtIdx);
           const rateCoef = SHEET_HOUR_RATE_COEF.get(label);
