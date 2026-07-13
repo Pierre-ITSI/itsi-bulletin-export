@@ -1645,6 +1645,38 @@ function isSheetNsLabel(label) {
   return SHEET_NS_SHORT_LABELS.has(label.replace(/ \(en [h€]\)$/, ""));
 }
 
+// Groupes de colonnes repliables (bouton Excel +/-, masquées par défaut si
+// vides/à 0 sur tout le fichier déposé) : indemnités transport/voyage,
+// majorations dimanche/férié/6ème jour + récupérations correspondantes,
+// indemnités repas/casse-croûte. Chaque groupe est un bloc CONTIGU de
+// l'ordre canonique de SHEET_REM_CATEGORIES (condition nécessaire pour le
+// groupement de colonnes Excel, qui opère sur une plage contiguë) — aucune
+// colonne étrangère ne s'intercale entre les codes d'un même groupe,
+// qu'ils soient tous présents dans le fichier déposé ou seulement certains.
+const SHEET_COLUMN_GROUPS = [
+  ["ITrPr", "ITrTg", "ITrPo", "IVgPr", "IVgTg", "IVgPo"],
+  ["Di100", "Di50", "JF50", "JF100", "JF200", "6e100", "RcDi", "RcF", "Rc6e"],
+  ["IRpP", "IRpHP", "IRpE", "IRpPr", "IRpPo", "ICaP", "ICaHP", "ICaE", "ICaPr"],
+];
+const SHEET_GROUPABLE_SHORT_LABELS = new Set(
+  SHEET_COLUMN_GROUPS.flat().map((code) => REM_CODE_TO_SHORT_LABEL.get(code))
+);
+function isGroupableLabel(label) {
+  return SHEET_GROUPABLE_SHORT_LABELS.has(label.replace(/ \(en [h€]\)$/, ""));
+}
+// "Vide" pour la décision de masquage d'une colonne groupée : valeur
+// absente, ou nombre valant explicitement 0 (contrairement à `hasVal` dans
+// la boucle d'écriture, où 0 compte comme "une valeur" à sommer dans les
+// sous-totaux — deux notions différentes).
+function isEmptyOrZero(val) {
+  if (val === null || val === undefined || val === "") return true;
+  if (typeof val === "number") return val === 0;
+  if (typeof val === "object" && typeof val.formula === "string") {
+    return typeof val.cached === "number" ? val.cached === 0 : false;
+  }
+  return false;
+}
+
 const SHEET_TOTAUX_LABELS = new Set([
   "Total brut (en €)", SHEET_NS_TOTAL_LABEL, "TOTAL (en €)",
   "Total itsi (en €)", "Écart avec itsi (en €)",
@@ -1850,6 +1882,9 @@ export async function buildSheetOutput(headers, sourceRows, options) {
   const frozenStats = new Map();
   let currentRow = headerRow + 2;
   const subtotalRefs = {};
+  // tgtCol -> vu au moins une valeur non vide/non nulle sur tout le
+  // fichier, pour les colonnes des groupes repliables (cf. plus bas).
+  const columnHasNonZeroData = {};
 
   for (const dept of Object.keys(byDept)) {
     const entries = byDept[dept];
@@ -1938,6 +1973,7 @@ export async function buildSheetOutput(headers, sourceRows, options) {
             (label === "Écart avec itsi (en €)" && totalColSheet && totalItsiCol) ||
             (val !== null && val !== undefined && val !== "");
           if (shouldSumForSubtotal(label) && hasVal) colsWithAmounts.add(tgtCol);
+          if (isGroupableLabel(label) && !isEmptyOrZero(val)) columnHasNonZeroData[tgtCol] = true;
         }
         currentRow += 1;
       }
@@ -2002,6 +2038,20 @@ export async function buildSheetOutput(headers, sourceRows, options) {
 
     currentRow = deptSubtotalRow + 2;
   }
+
+  // -- groupes de colonnes repliables (transport/voyage, majorations
+  // dimanche/férié/6ème jour + récup., repas/casse-croûte) : bouton Excel
+  // +/- ("grouper les colonnes"), masquées par défaut si vides/à 0 sur
+  // tout le fichier (`columnHasNonZeroData`, alimenté ligne par ligne
+  // ci-dessus), visibles d'un clic sinon.
+  columnPlan.forEach(({ label }, i) => {
+    if (!isGroupableLabel(label)) return;
+    const idx = i + 1;
+    const letter = colLetterFromIndex(idx);
+    const column = ws.getColumn(idx);
+    column.outlineLevel = 1;
+    column.hidden = !columnHasNonZeroData[letter];
+  });
 
   for (const [label, count] of frozenStats) {
     warnings.push(

@@ -264,6 +264,46 @@ Chaque colonne n'apparaît que si les colonnes source dont elle dépend sont
 présentes dans le fichier déposé (ex. pas de "Total itsi"/"Écart avec
 itsi" si le fichier source ne contient pas "Total itsi").
 
+## Groupes de colonnes repliables côté Feuille
+
+Trois groupes de variables de paie de la zone verte sont **regroupés**
+(bouton Excel +/- pour les afficher/masquer, `column.outlineLevel` dans
+`buildSheetOutput()`) et **masqués par défaut colonne par colonne** si
+elles sont vides ou valent 0 sur l'ensemble du fichier déposé
+(`columnHasNonZeroData`, alimenté pendant l'écriture des lignes de
+détail) :
+
+1. **Indemnités transport et voyage** : Indem. transport (Prépa/
+   Tournage/PostProduction), Indem. voyage (Prépa/Tournage/
+   PostProduction).
+2. **Majorations dimanche/férié/6ème jour + récupérations** : Majo.
+   dimanche 100%/50%, Majo. férié 50%/100%/200%, Majo. 6eme jour 100%,
+   Récup. dimanche/férié/6eme jour.
+3. **Indemnités repas et casse-croûte** : Indem. repas (RP/Hors RP/
+   Étranger/Prépa/Postproduction), Indem. casse crôute (RP/Hors RP/
+   Étranger/Prépa).
+
+Chaque colonne (h) et (€) est masquée **indépendamment** de sa jumelle
+selon ses propres valeurs (une colonne "(€)" vide alors que la "(h)"
+correspondante a des valeurs reste masquée, et inversement) : en
+pratique les deux varient toujours ensemble sur des données réelles.
+Cliquer sur le "+" en haut du groupe (`SHEET_COLUMN_GROUPS` dans
+`src/generator.js`) réaffiche toutes les colonnes du groupe, y compris
+celles restées vides.
+
+Ces 3 groupes correspondent chacun à un bloc **contigu** de codes dans
+l'ordre canonique du référentiel (`SHEET_REM_CATEGORIES`) — condition
+nécessaire au groupement de colonnes Excel, qui ne peut porter que sur
+une plage contiguë. Si un code d'un groupe est absent du fichier déposé,
+les autres codes du même groupe réellement présents restent contigus
+entre eux (aucune colonne étrangère ne peut jamais s'intercaler, puisque
+l'ordre de sortie suit toujours l'ordre canonique).
+
+Cette fonctionnalité est propre à l'export "Feuille" (elle n'existe ni
+côté Combine, ni côté Feuille détaillée, pas demandée à ce jour) — mais
+les 3 groupes de codes (`SHEET_COLUMN_GROUPS`) sont définis une seule
+fois et pourraient être réutilisés tels quels si demandé ailleurs.
+
 ## Colonnes "Code contrat" / "Jour(s) travaillés" côté Feuille
 
 Ni "Code contrat" ni "Jour(s) travaillés" ne sont fournis par
