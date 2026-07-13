@@ -784,12 +784,15 @@ const FONT_DEPT = { name: "Arial", size: 8, italic: true };
 const FONT_CONTRACT = { name: "Arial", size: 8, italic: true };
 const FMT_HOURS = "#,##0.00";
 const FMT_EUROS = '#,##0.00"€"';
-// "Taux horaire" : format euros, mais sans arrondi à 2 décimales — certains
-// taux calculés côté production ont plus de décimales significatives (ex.
-// 68.0408999) qu'un simple "#,##0.00" masquerait à l'affichage (bien que la
-// valeur réelle de la cellule, elle, ne soit jamais tronquée). Les "#"
-// n'affichent un chiffre que s'il existe (pas de zéros de remplissage).
-const FMT_TAUX = '#,##0.##########"€"';
+// "Taux horaire" : format euros avec toujours au moins 2 décimales (le
+// "0.00" force leur affichage même si elles valent 0, ex. "20,00€" pas
+// "20€"), mais sans arrondi au-delà — certains taux calculés côté
+// production ont plus de décimales significatives (ex. 68.0408999) qu'un
+// simple "#,##0.00" masquerait à l'affichage (bien que la valeur réelle de
+// la cellule, elle, ne soit jamais tronquée). Les "#" après le "0.00"
+// n'affichent un chiffre supplémentaire que s'il existe (pas de zéros de
+// remplissage au-delà des 2 premières décimales).
+const FMT_TAUX = '#,##0.00########"€"';
 // "Écart avec itsi" (Feuille) : 4 décimales pour repérer les écarts
 // infra-centime entre le total calculé et le total recopié de la source.
 const FMT_EUROS_4DP = '#,##0.0000"€"';
