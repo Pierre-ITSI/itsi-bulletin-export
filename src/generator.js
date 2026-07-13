@@ -1482,21 +1482,98 @@ const SHEET_IDENTITY_LABELS_LIST = [
 ];
 const SHEET_IDENTITY_LABELS = new Set(SHEET_IDENTITY_LABELS_LIST);
 
-// Codes du référentiel LoV Remuneration Category d'itsi-production (même
-// référentiel que HOUR_RATE_PAIRS/isNsLabel côté Combine). SheetExcelExport
-// utilise le CODE brut comme libellé de colonne dynamique (pas le libellé
-// court) : chaque code donne une paire "<code> (en h)"/"<code> (en €)".
-const SHEET_REM_CODES = [
-  "Jt", "Hr", "HS125", "HS150", "HS175", "HS200", "HJ25", "HD50", "HD100",
-  "HD200", "HN25", "HN50", "HN100", "HA100", "HA50", "Di100", "Di50",
-  "JF50", "JF100", "JF200", "6e100", "RcDi", "RcF", "Rc6e",
-  "ITrPr", "ITrTg", "ITrPo", "IVgPr", "IVgTg", "IVgPo",
-  "IRpP", "IRpHP", "IRpE", "IRpPr", "IRpPo",
-  "ICaP", "ICaHP", "ICaE", "ICaPr",
-  "ICo", "Eq", "Eq125", "Eq150", "Eq175", "Eq200", "Plf",
-  "PrE", "CG", "CI", "DS", "DNS", "RepCa", "ReS", "ReNS",
-  "IMaS", "IMaNS", "IML", "IVHSS", "Navig", "MOBI", "Trans",
+// Référentiel LoV Remuneration Category d'itsi-production (même
+// référentiel que HOUR_RATE_PAIRS/isNsLabel côté Combine) : [code, libellé
+// court] pour chacun des 61 types de variable de paie, extrait directement
+// de la table `remuneration_category` (requête fournie en conversation).
+// Les en-têtes de colonnes utilisent le **libellé court** (`SHORT_LABEL`),
+// pas le code brut : `SheetExcelExport`/`SheetDetailedExcelExport`
+// appelleront prochainement `getShortLabel()` plutôt que `getCode()`, comme
+// côté Combine (`HOUR_RATE_PAIRS`/`STANDARD_HEADERS`). Certains libellés
+// courts reprennent tels quels des coquilles présentes dans le référentiel
+// (ex. "casse crôute" pour "croûte", "Rep. contine" pour "cantine",
+// "6eme"/"Récup. 6eme jour" sans accent contrairement à Combine) : gardés
+// à l'identique pour rester fidèles à ce que `getShortLabel()` renverra
+// réellement en production, plutôt que "corrigés" ici.
+const SHEET_REM_CATEGORIES = [
+  ["Jt", "J. travaillés"],
+  ["Hr", "H. normales"],
+  ["HS125", "H. supp. 125%"],
+  ["HS150", "H. supp. 150%"],
+  ["HS175", "H. supp. 175%"],
+  ["HS200", "H. supp. 200%"],
+  ["HJ25", "Majo. jour 25%"],
+  ["HD50", "Majo. jour 50%"],
+  ["HD100", "Majo. jour 100%"],
+  ["HD200", "Majo. jour 200%"],
+  ["HN25", "Majo. nuit 25%"],
+  ["HN50", "Majo. nuit 50%"],
+  ["HN100", "Majo. nuit 100%"],
+  ["HA100", "H. anticipées 100%"],
+  ["HA50", "H. anticipées 50%"],
+  ["Di100", "Majo. dimanche 100%"],
+  ["Di50", "Majo. dimanche 50%"],
+  ["JF50", "Majo. férié 50%"],
+  ["JF100", "Majo. férié 100%"],
+  ["JF200", "Majo. férié 200%"],
+  ["6e100", "Majo. 6eme jour 100%"],
+  ["RcDi", "Récup. dimanche"],
+  ["RcF", "Récup. férié"],
+  ["Rc6e", "Récup. 6eme jour"],
+  ["ITrPr", "Indem. transport (Prépa)"],
+  ["ITrTg", "Indem. transport (Tournage)"],
+  ["ITrPo", "Indem. transport (PostProduction)"],
+  ["IVgPr", "Indem. voyage (Prépa)"],
+  ["IVgTg", "Indem. voyage (Tournage)"],
+  ["IVgPo", "Indem. voyage (PostProduction)"],
+  ["IRpP", "Indem. repas (RP)"],
+  ["IRpHP", "Indem. repas (Hors RP)"],
+  ["IRpE", "Indem. repas (Étranger)"],
+  ["IRpPr", "Indem. repas (Prépa)"],
+  ["IRpPo", "Indem. repas (Postproduction)"],
+  ["ICaP", "Indem. casse crôute (RP)"],
+  ["ICaHP", "Indem. casse crôute (Hors RP)"],
+  ["ICaE", "Indem. casse crôute (Étranger)"],
+  ["ICaPr", "Indem. casse crôute (Prépa)"],
+  ["ICo", "Indem. continue"],
+  ["Eq", "Retrait équivalence"],
+  ["Eq125", "Retrait equi - H. supp. 125%"],
+  ["Eq150", "Retrait equi - H. supp. 150%"],
+  ["Eq175", "Retrait equi - H. supp. 175%"],
+  ["Eq200", "Retrait equi - H. supp. 200%"],
+  ["Plf", "Retrait plafond majo."],
+  ["PrE", "Prime except."],
+  ["CG", "Cachet grp."],
+  ["CI", "Cachet iso."],
+  ["DS", "Déf. soumis"],
+  ["DNS", "Déf. non soumis"],
+  ["RepCa", "Rep. contine"],
+  ["ReS", "Rep. soumis"],
+  ["ReNS", "Rep. non soumis"],
+  ["IMaS", "Indem. Matériel (S)"],
+  ["IMaNS", "Indem. Matériel (NS)"],
+  ["IML", "Indem. MàL (S)"],
+  ["IVHSS", "Indem. VHSS"],
+  ["Navig", "Navigo"],
+  ["MOBI", "Mob. durables"],
+  ["Trans", "Transport Pub."],
 ];
+const REM_CODE_TO_SHORT_LABEL = new Map(SHEET_REM_CATEGORIES);
+const SHEET_REM_SHORT_LABELS = SHEET_REM_CATEGORIES.map(([, shortLabel]) => shortLabel);
+
+// Reconnaît aussi bien "<code> (h)"/"<code> (€)" (fichiers actuels, tant
+// que `SheetExcelExport`/`SheetDetailedExcelExport` n'appellent pas encore
+// `getShortLabel()`) que les futures colonnes déjà nommées par libellé
+// court, en les faisant toutes deux pointer vers la même colonne cible
+// "<libellé court> (en h)"/"(en €)" — pas de rupture le temps que le
+// changement soit fait côté PHP, la sortie affiche toujours le libellé
+// court dans les deux cas.
+const SHEET_REM_CODE_RENAME = Object.fromEntries(
+  SHEET_REM_CATEGORIES.flatMap(([code, shortLabel]) => [
+    [normalizeLabel(`${code} (h)`), `${shortLabel} (en h)`],
+    [normalizeLabel(`${code} (€)`), `${shortLabel} (en €)`],
+  ])
+);
 
 // Libellé de la colonne "non soumis" côté Feuille : contrairement à
 // Combine (renommée "Total non soumis"), le fichier de référence Feuille
@@ -1516,7 +1593,7 @@ const SHEET_NS_TOTAL_LABEL = "Total indemnité (NS)";
 const SHEET_STANDARD_HEADERS = [
   ...SHEET_IDENTITY_LABELS_LIST,
   "Jour(s) travaillés",
-  ...SHEET_REM_CODES.flatMap((code) => [`${code} (en h)`, `${code} (en €)`]),
+  ...SHEET_REM_SHORT_LABELS.flatMap((label) => [`${label} (en h)`, `${label} (en €)`]),
   "Total brut (en €)",
   "Total itsi (en €)",
 ];
@@ -1531,12 +1608,13 @@ const SHEET_TARGET_NORM_TO_LABEL = new Map(
 const SHEET_IDENTITY_RENAME = {
   "total somme": "Total brut (en €)",
   "total itsi": "Total itsi (en €)",
+  ...SHEET_REM_CODE_RENAME,
 };
 
 // Coefficients "Rate" du référentiel (mêmes id 2-24 / 40-46 que
-// HOUR_RATE_PAIRS côté Combine), ici indexés par code puisque l'export
-// "Feuille" utilise directement le code comme libellé de colonne.
-const SHEET_HOUR_RATE_PAIRS = [
+// HOUR_RATE_PAIRS côté Combine), indexés par code puis reconvertis en
+// libellé court (clé effective des colonnes "(en €)" écrites).
+const SHEET_HOUR_RATE_PAIRS_BY_CODE = [
   ["Hr", 1], ["HS125", 1.25], ["HS150", 1.5], ["HS175", 1.75], ["HS200", 2],
   ["HJ25", 0.25], ["HD50", 0.5], ["HD100", 1], ["HD200", 2],
   ["HN25", 0.25], ["HN50", 0.5], ["HN100", 1],
@@ -1548,15 +1626,20 @@ const SHEET_HOUR_RATE_PAIRS = [
   ["Eq200", -2], ["Plf", -1],
 ];
 const SHEET_HOUR_RATE_COEF = new Map(
-  SHEET_HOUR_RATE_PAIRS.map(([code, rate]) => [`${code} (en €)`, rate])
+  SHEET_HOUR_RATE_PAIRS_BY_CODE.map(([code, rate]) => [
+    `${REM_CODE_TO_SHORT_LABEL.get(code)} (en €)`,
+    rate,
+  ])
 );
 
 // Codes "non soumis" du référentiel (DNS/ReNS/IMaNS, même liste que
-// isNsLabel côté Combine) : ici identifiés par code, le libellé court
-// ("Déf. non soumis"…) n'apparaissant pas dans cet export.
-const SHEET_NS_CODES = new Set(["DNS", "ReNS", "IMaNS"]);
+// isNsLabel côté Combine), reconvertis en libellé court : "Déf. non
+// soumis", "Rep. non soumis", "Indem. Matériel (NS)".
+const SHEET_NS_SHORT_LABELS = new Set(
+  ["DNS", "ReNS", "IMaNS"].map((code) => REM_CODE_TO_SHORT_LABEL.get(code))
+);
 function isSheetNsLabel(label) {
-  return SHEET_NS_CODES.has(label.replace(/ \(en [h€]\)$/, ""));
+  return SHEET_NS_SHORT_LABELS.has(label.replace(/ \(en [h€]\)$/, ""));
 }
 
 const SHEET_TOTAUX_LABELS = new Set([
@@ -1990,6 +2073,7 @@ const SHEET_DETAIL_IDENTITY_TARGET_NORM_TO_LABEL = new Map(
 const SHEET_DETAIL_DAY_RENAME = {
   transport: "Transport (en h)",
   "total travaille": "Total travaillé (en h)",
+  ...SHEET_REM_CODE_RENAME,
 };
 // "Total itsi (en €)" n'existe pas encore dans `SheetDetailedExcelExport`
 // à ce jour (comme "Code contrat"/"Jour(s) travaillés" côté Feuille), mais
@@ -2002,7 +2086,7 @@ const SHEET_DETAIL_DAY_RENAME = {
 const SHEET_DETAIL_DAY_HEADERS_LIST = [
   "Date", "Début", "Repas", "Pause", "Fin", "Transport (en h)",
   "Total travaillé (en h)",
-  ...SHEET_REM_CODES.flatMap((code) => [`${code} (en h)`, `${code} (en €)`]),
+  ...SHEET_REM_SHORT_LABELS.flatMap((label) => [`${label} (en h)`, `${label} (en €)`]),
   "Total itsi (en €)",
 ];
 const SHEET_DETAIL_DAY_TARGET_NORM_TO_LABEL = new Map(

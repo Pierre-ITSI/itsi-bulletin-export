@@ -58,8 +58,9 @@ par format cible), le classement des métiers par département
 sous-total contrat, le format euros sans arrondi de "Taux horaire"
 (`FMT_TAUX`), les sous-totaux, et le calcul "taux horaire x coefficient x
 heures" pour les variables concernées (cf. `Colonnes calculées` plus bas —
-indexé par libellé court côté Combine, par code brut côté Feuille,
-`SHEET_HOUR_RATE_COEF`). Feuille détaillée réutilise `resolveColumnMapping()`
+indexé par libellé court des deux côtés — `HOUR_RATE_COEF` côté Combine,
+`SHEET_HOUR_RATE_COEF` côté Feuille — cf. `Libellés courts des variables
+de paie côté Feuille` plus bas). Feuille détaillée réutilise `resolveColumnMapping()`
 et le même calcul "taux horaire x coefficient x heures"
 (`SHEET_HOUR_RATE_COEF`), mais pas les mécanismes de regroupement
 département/contrat (un seul salarié par fichier) — cf. `Génération
@@ -200,6 +201,39 @@ Les indemnités à montant libre (transport, repas, cachets, défraiements…)
 ne sont pas concernées et gardent leur comportement précédent (valeur ou
 formule traduite depuis le fichier source).
 
+## Libellés courts des variables de paie côté Feuille
+
+Contrairement à Combine (colonnes déjà nommées par libellé court dans le
+fichier source, ex. "H. normales"), `SheetExcelExport`/
+`SheetDetailedExcelExport` utilisent aujourd'hui le **code brut** du
+référentiel LoV `Remuneration Category` comme libellé de colonne (ex.
+"Hr (h)"/"Hr (€)" plutôt que "H. normales (en h)"/"(en €)"). Feuille et
+Feuille détaillée affichent désormais, elles aussi, le **libellé court**
+dans leurs colonnes de sortie (`SHEET_REM_CATEGORIES`,
+`REM_CODE_TO_SHORT_LABEL` dans `src/generator.js` — table extraite
+directement de `remuneration_category`, 61 entrées) :
+
+- Certains libellés courts reprennent tels quels des coquilles présentes
+  dans le référentiel (ex. "casse crôute" pour "croûte", "Rep. contine"
+  pour "cantine", "6eme"/"Récup. 6eme jour" sans accent contrairement au
+  "6ème" de Combine) : gardés à l'identique pour rester fidèles à ce que
+  `getShortLabel()` renverra réellement en production plutôt que
+  "corrigés" ici — une correction ici désynchroniserait le nom affiché de
+  la vraie donnée source.
+- **Double reconnaissance, sans rupture** : `SHEET_REM_CODE_RENAME`
+  reconnaît aussi bien "Hr (h)"/"Hr (€)" (fichiers actuels tant que le
+  code PHP n'a pas encore été mis à jour) que les futures colonnes déjà
+  nommées par libellé court, et fait pointer les deux vers la même colonne
+  cible — la sortie affiche toujours le libellé court dans les deux cas,
+  aucune régression le temps que `SheetExcelExport`/
+  `SheetDetailedExcelExport` appellent `getShortLabel()` plutôt que
+  `getCode()`.
+- `SHEET_HOUR_RATE_COEF` (coefficients "taux horaire x coefficient x
+  heures", cf. section précédente) et la détection des colonnes "non
+  soumises" (`isSheetNsLabel()` : DNS/ReNS/IMaNS, devenus "Déf. non
+  soumis"/"Rep. non soumis"/"Indem. Matériel (NS)") sont indexés par
+  libellé court désormais, plus par code.
+
 ## Totaux côté Feuille
 
 La zone totaux de l'export "Feuille" (`buildSheetOutput()`) comporte 5
@@ -330,7 +364,9 @@ comme le reste de l'outil :
 3. Ligne séparatrice (une seule cellule "-").
 4. Ligne des libellés du tableau jour par jour (Date, Début, Repas, Pause,
    Fin, Transport, Total travaillé, puis les paires (h)/(€) du référentiel
-   `SHEET_REM_CODES`, puis Prix — colonne remplacée à la génération, voir
+   `SHEET_REM_CATEGORIES` — par code aujourd'hui, cf. `Libellés courts des
+   variables de paie côté Feuille` plus bas — puis Prix, colonne remplacée
+   à la génération, voir
    plus bas).
 5. Une ligne par jour du relevé.
 6. Une dernière ligne de pied (totaux).
