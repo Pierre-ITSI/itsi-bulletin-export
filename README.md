@@ -330,7 +330,8 @@ comme le reste de l'outil :
 3. Ligne séparatrice (une seule cellule "-").
 4. Ligne des libellés du tableau jour par jour (Date, Début, Repas, Pause,
    Fin, Transport, Total travaillé, puis les paires (h)/(€) du référentiel
-   `SHEET_REM_CODES`, puis Prix).
+   `SHEET_REM_CODES`, puis Prix — colonne remplacée à la génération, voir
+   plus bas).
 5. Une ligne par jour du relevé.
 6. Une dernière ligne de pied (totaux).
 
@@ -355,26 +356,46 @@ ici from scratch, avec les mêmes conventions que le reste de l'outil :
   ligne 9), sur 3 zones : bleu ("contrat") pour les colonnes de pointage
   horaire (Date, Début, Repas, Pause, Fin, Transport — aucune n'a de
   composante monétaire directe), vert ("paie") pour "Total travaillé" et
-  les variables de paie, violet ("totaux") pour "Prix (en €)".
+  les variables de paie, zone totaux (violet/bleu clair/rouge clair) pour
+  les 5 colonnes de totaux — voir plus bas.
 - Les colonnes "(en €)" des codes du référentiel `SHEET_HOUR_RATE_COEF`
   sont **calculées** par formule (taux horaire x coefficient x heures,
   référence absolue vers la cellule "Taux horaire" du bloc identité — un
   seul taux pour tout le relevé), comme côté Combine/Feuille, au lieu
   d'être recopiées du fichier source.
-- "Prix (en €)" (par jour) est **calculée** : formule SOMME des colonnes
-  "(en €)" de la zone "paie" de la ligne, au lieu de recopier la valeur
-  texte du fichier source (ex. "209,46 €", qui n'est pas un nombre
-  exploitable en formule).
+- **"Prix" n'est pas reprise** dans l'export (comme "Total somme" côté
+  Combine) : elle est remplacée par les 5 mêmes colonnes de totaux que
+  côté Feuille (`SHEET_TOTAUX_LABELS`, `SHEET_NS_TOTAL_LABEL`,
+  `fillSectionForDetailDayLabel()`), reprises **par jour** en plus du pied
+  de tableau :
+  1. **Total brut (en €)** : **calculée**, formule SOMME des colonnes
+     "(en €)" de la zone "paie" de la ligne, **à l'exclusion des colonnes
+     "non soumises"** (`isSheetNsLabel()`, même règle que côté Feuille) —
+     remplace "Prix", qui sommait tout sans cette exclusion et stockait le
+     résultat en texte formaté ("209,46 €"), pas en nombre exploitable.
+  2. **Total indemnité (NS)** : **calculée**, formule SOMME des colonnes
+     "non soumises" en euros de la ligne — n'apparaît que si le fichier
+     déposé contient au moins une de ces colonnes (DNS, ReNS, IMaNS).
+  3. **TOTAL (en €)** : **calculée**, `Total brut + Total indemnité (NS)`.
+  4. **Total itsi (en €)** et 5. **Écart avec itsi (en €)** : mêmes
+     colonnes et mêmes formules que côté Feuille, mais **pas encore
+     disponibles** — `SheetDetailedExcelExport` ne fournit aucune colonne
+     "Total itsi" à ce jour (contrairement à `SheetExcelExport`), donc ces
+     deux colonnes n'apparaissent dans l'export que si le fichier déposé
+     en contient une, comme "Code contrat"/"Jour(s) travaillés" côté
+     Feuille.
 - La ligne de pied ("TOTAL", en gras, sans fill particulier — même
   convention que "TOTAL GÉNÉRAL" côté Combine/Feuille) additionne par
-  formule SOMME chaque colonne des zones "paie"/"totaux" sur les lignes de
-  détail, plutôt que de recopier les totaux déjà calculés du fichier
-  source.
+  formule SOMME chaque colonne des zones "paie"/"totaux" (dont les 5
+  colonnes de totaux ci-dessus) sur les lignes de détail, plutôt que de
+  recopier les totaux déjà calculés du fichier source.
 - Le nom de la feuille de calcul générée reprend celui du fichier source
   (ex. "ROX.F0544", `$sheet->getShortPUID()` côté PHP), pour rester
   identifiable facilement.
 
-Tous les calculs recalculés (formules taux x coefficient x heures, "Prix
-(en €)", pied de tableau) ont été vérifiés colonne par colonne contre les
-valeurs déjà présentes dans un fichier réel de référence : résultats
-identiques au centime près.
+Tous les calculs recalculés (formules taux x coefficient x heures, "Total
+brut (en €)"/"Total indemnité (NS)"/"TOTAL (en €)" par jour, pied de
+tableau) ont été vérifiés colonne par colonne contre les valeurs déjà
+présentes dans un fichier réel de référence : résultats identiques au
+centime près (y compris avec des colonnes "non soumises" et "Total itsi"
+ajoutées artificiellement pour vérifier ces deux cas).

@@ -1966,11 +1966,12 @@ export async function generateSheet(sourceArrayBuffer, options) {
 // colonnes "au cas où" à filtrer par position, seulement par libellé, comme
 // le reste de l'outil) : ligne 1 = libellés d'identité (Nom, Prénom…
 // Statut), ligne 2 = valeurs, ligne 3 = séparateur "-", ligne 4 = libellés du
-// tableau jour par jour (Date, Début… Prix), lignes suivantes = un jour par
-// ligne, dernière ligne = pied (totaux). Le fichier source n'a aucun style
-// ni aucune formule (juste `FromArray` côté production) : tout le formatage
-// ci-dessous (zones de couleur, gras, formats, formules vivantes) est donc
-// entièrement appliqué par ce générateur, pas seulement corrigé.
+// tableau jour par jour (Date, Début… codes du référentiel), lignes
+// suivantes = un jour par ligne, dernière ligne = pied (totaux). Le fichier
+// source n'a aucun style ni aucune formule (juste `FromArray` côté
+// production) : tout le formatage ci-dessous (zones de couleur, gras,
+// formats, formules vivantes) est donc entièrement appliqué par ce
+// générateur, pas seulement corrigé.
 
 const SHEET_DETAIL_IDENTITY_LABELS_LIST = [
   "Nom", "Prénom", "Email", "Métier", "Semaine", "Date de début",
@@ -1985,17 +1986,24 @@ const SHEET_DETAIL_IDENTITY_TARGET_NORM_TO_LABEL = new Map(
 // fichier source (contrairement au reste des colonnes heures/euros) : on
 // les renomme ici avec le suffixe "(en h)"/"(en €)" pour profiter des mêmes
 // règles de format (labelIsHours/labelIsEuros) et de couleur que le reste
-// de l'outil. "Prix" devient "Prix (en €)" pour la même raison.
+// de l'outil.
 const SHEET_DETAIL_DAY_RENAME = {
   transport: "Transport (en h)",
   "total travaille": "Total travaillé (en h)",
-  prix: "Prix (en €)",
 };
+// "Total itsi (en €)" n'existe pas encore dans `SheetDetailedExcelExport`
+// à ce jour (comme "Code contrat"/"Jour(s) travaillés" côté Feuille), mais
+// reste un libellé cible reconnu pour que la colonne se place et se
+// colore correctement dès qu'elle apparaîtra dans le fichier déposé (cf.
+// `hasTotalItsi` plus bas). Les 4 autres colonnes de la zone totaux (Total
+// brut/Total indemnité (NS)/TOTAL/Écart avec itsi) sont, elles, toujours
+// calculées "from scratch" (jamais de colonne source correspondante) :
+// pas besoin de les lister ici pour la résolution de colonnes.
 const SHEET_DETAIL_DAY_HEADERS_LIST = [
   "Date", "Début", "Repas", "Pause", "Fin", "Transport (en h)",
   "Total travaillé (en h)",
   ...SHEET_REM_CODES.flatMap((code) => [`${code} (en h)`, `${code} (en €)`]),
-  "Prix (en €)",
+  "Total itsi (en €)",
 ];
 const SHEET_DETAIL_DAY_TARGET_NORM_TO_LABEL = new Map(
   SHEET_DETAIL_DAY_HEADERS_LIST.map((l) => [normalizeLabel(l), l])
@@ -2004,17 +2012,28 @@ const SHEET_DETAIL_DAY_TARGET_NORM_TO_LABEL = new Map(
 // Zone bleue ("contrat") : colonnes de pointage horaire, sans composante
 // monétaire directe (comme "Date de début"/"Date de fin" côté Combine et
 // Feuille). Zone verte ("paie") : heures travaillées et variables de paie.
-// Zone violette ("totaux") : "Prix (en €)", total calculé de la ligne.
+// Zone "totaux" : mêmes 5 colonnes calculées, mêmes libellés et mêmes
+// teintes que la zone totaux côté Feuille (`SHEET_TOTAUX_LABELS`,
+// `SHEET_NS_TOTAL_LABEL`) — "Total brut (en €)" (exclut les indemnités non
+// soumises), "Total indemnité (NS)", "TOTAL (en €)" (= les deux
+// précédentes), "Total itsi (en €)" (recopiée depuis la source si
+// présente), "Écart avec itsi (en €)".
 const SHEET_DETAIL_DAY_IDENTITY_LABELS = new Set([
   "Date", "Début", "Repas", "Pause", "Fin", "Transport (en h)",
 ]);
 function sectionForDetailDayLabel(label) {
   if (SHEET_DETAIL_DAY_IDENTITY_LABELS.has(label)) return "contrat";
-  if (label === "Prix (en €)") return "totaux";
+  if (SHEET_TOTAUX_LABELS.has(label)) return "totaux";
   return "paie";
 }
+function fillSectionForDetailDayLabel(label) {
+  if (label === "Total itsi (en €)") return "totaux_itsi";
+  if (label === "Écart avec itsi (en €)") return "totaux_ecart";
+  return sectionForDetailDayLabel(label);
+}
 function numFmtForDetailDayLabel(label) {
-  if (labelIsEuros(label)) return FMT_EUROS;
+  if (label === "Écart avec itsi (en €)") return FMT_EUROS_4DP;
+  if (labelIsEuros(label) || SHEET_TOTAUX_LABELS.has(label)) return FMT_EUROS;
   if (labelIsHours(label)) return FMT_HOURS;
   return "General";
 }
@@ -2115,9 +2134,9 @@ export async function buildDetailedSheetOutput(
     ...identityMapping.extraEntries.map(([srcCol, label]) => ({ label, srcCol })),
   ];
 
-  // -- tableau jour par jour (Date… Prix) : colonnes standard reprises dans
-  // l'ordre canonique, extras (codes de rémunération non répertoriés) en
-  // fin de tableau, comme côté Feuille.
+  // -- tableau jour par jour (Date… codes du référentiel) : colonnes
+  // standard reprises dans l'ordre canonique, extras (codes de
+  // rémunération non répertoriés) en fin de tableau, comme côté Feuille.
   const dayMapping = resolveColumnMapping(
     dayHeaders,
     SHEET_DETAIL_DAY_TARGET_NORM_TO_LABEL,
@@ -2127,10 +2146,40 @@ export async function buildDetailedSheetOutput(
   for (const [srcCol, label] of Object.entries(dayMapping.letterToTargetLabel)) {
     dayLabelToSrcCol[label] = srcCol;
   }
-  const activeDayLabels = SHEET_DETAIL_DAY_HEADERS_LIST.filter((l) => dayLabelToSrcCol[l]);
+  // "Prix" n'est plus reprise dans l'export : "Total brut (en €)"
+  // (calculée, voir plus bas) la remplace, avec la même exclusion des
+  // indemnités non soumises que "Total brut" côté Combine/Feuille (le
+  // fichier source stocke en plus "Prix" en texte formaté, pas en nombre
+  // exploitable). Même principe que "Total somme" côté Combine
+  // (`isTotalSommeLabel`).
+  const dayExtraEntries = dayMapping.extraEntries.filter(
+    ([, label]) => normalizeLabel(label) !== "prix"
+  );
+  const activeDayLabels = SHEET_DETAIL_DAY_HEADERS_LIST.filter(
+    (l) => dayLabelToSrcCol[l] && !SHEET_TOTAUX_LABELS.has(l)
+  );
+  // Zone totaux (5 colonnes), même structure que côté Feuille : "Total
+  // brut"/"Total indemnité (NS)"/"TOTAL" sont toujours calculées à partir
+  // des colonnes de paie du tableau jour (jamais de colonne source
+  // correspondante) ; "Total itsi"/"Écart avec itsi" n'apparaissent que si
+  // le fichier déposé contient réellement "Total itsi" (pas encore le cas
+  // à ce jour, cf. docblock plus haut).
+  const hasNsEuroCol = activeDayLabels.some((l) => isSheetNsLabel(l) && labelIsEuros(l));
+  const hasTotalItsi = !!dayLabelToSrcCol["Total itsi (en €)"];
+  const DETAIL_BRUT_SRC = "__DETAIL_BRUT__";
+  const DETAIL_NS_TOTAL_SRC = "__DETAIL_NS_TOTAL__";
+  const DETAIL_TOTAL_SRC = "__DETAIL_TOTAL__";
+  const DETAIL_ECART_SRC = "__DETAIL_ECART__";
   const dayColumnPlan = [
     ...activeDayLabels.map((label) => ({ label, srcCol: dayLabelToSrcCol[label] })),
-    ...dayMapping.extraEntries.map(([srcCol, label]) => ({ label, srcCol })),
+    ...dayExtraEntries.map(([srcCol, label]) => ({ label, srcCol })),
+    { label: "Total brut (en €)", srcCol: DETAIL_BRUT_SRC },
+    ...(hasNsEuroCol ? [{ label: SHEET_NS_TOTAL_LABEL, srcCol: DETAIL_NS_TOTAL_SRC }] : []),
+    { label: "TOTAL (en €)", srcCol: DETAIL_TOTAL_SRC },
+    ...(hasTotalItsi
+      ? [{ label: "Total itsi (en €)", srcCol: dayLabelToSrcCol["Total itsi (en €)"] }]
+      : []),
+    ...(hasTotalItsi ? [{ label: "Écart avec itsi (en €)", srcCol: DETAIL_ECART_SRC }] : []),
   ];
   const nDayCols = dayColumnPlan.length;
 
@@ -2150,13 +2199,23 @@ export async function buildDetailedSheetOutput(
     if (daySectionOfIndex[i] !== daySectionOfIndex[i + 1]) sectionBoundaryCols.push(i);
   }
 
-  // Colonnes "(en €)" du tableau jour, pour calculer "Prix (en €)" par
-  // formule (somme des variables de paie en € de la ligne) plutôt que de
-  // recopier la valeur texte du fichier source ("209,46 €", pas un nombre).
-  const dayEuroCols = dayColumnPlan
-    .filter(({ label }) => sectionForDetailDayLabel(label) === "paie" && labelIsEuros(label))
+  // Colonnes "(en €)" du tableau jour, pour calculer "Total brut (en €)"
+  // (somme des variables de paie en €, à l'exclusion des colonnes "non
+  // soumises") et "Total indemnité (NS)" (somme des colonnes "non
+  // soumises" seulement) par formule, comme "Total brut"/"Total indemnité
+  // (NS)" côté Feuille — même règle d'exclusion (`isSheetNsLabel`).
+  const dayEuroColsExclNs = dayColumnPlan
+    .filter(({ label }) => sectionForDetailDayLabel(label) === "paie" && labelIsEuros(label) && !isSheetNsLabel(label))
     .map(({ srcCol }) => dayTargetLetterOf[srcCol]);
-  const PRIX_SRC = dayLabelToSrcCol["Prix (en €)"];
+  const dayNsEuroCols = dayColumnPlan
+    .filter(({ label }) => sectionForDetailDayLabel(label) === "paie" && labelIsEuros(label) && isSheetNsLabel(label))
+    .map(({ srcCol }) => dayTargetLetterOf[srcCol]);
+  // Colonnes cibles des totaux, pour les formules "TOTAL (en €)"/"Écart
+  // avec itsi (en €)" (référencées dans la même ligne).
+  const totalBrutCol = dayTargetLetterOf[DETAIL_BRUT_SRC];
+  const nsTotalCol = hasNsEuroCol ? dayTargetLetterOf[DETAIL_NS_TOTAL_SRC] : null;
+  const totalCol = dayTargetLetterOf[DETAIL_TOTAL_SRC];
+  const totalItsiCol = hasTotalItsi ? dayTargetLetterOf[dayLabelToSrcCol["Total itsi (en €)"]] : null;
 
   // Colonne cible "Taux horaire" du bloc identité, et coefficient de taux
   // pour chaque code du référentiel (mêmes coefficients que côté Feuille,
@@ -2239,7 +2298,7 @@ export async function buildDetailedSheetOutput(
     cell.value = label;
     cell.font = FONT_LABEL_BOLD;
     cell.alignment = { ...CENTER, wrapText: true };
-    cell.fill = SECTION_HEADER_FILL[sectionForDetailDayLabel(label)];
+    cell.fill = SECTION_HEADER_FILL[fillSectionForDetailDayLabel(label)];
     cell.border = { bottom: HEADER_BOTTOM_BORDER };
     ws.getColumn(idx).width = widthForLabel(label);
   });
@@ -2260,16 +2319,31 @@ export async function buildDetailedSheetOutput(
       if (useRateFormula) {
         outCell.value = { formula: `${tauxCellRef}*${rateCoef}*${rateHourCol}${targetRow}` };
         outCell.numFmt = FMT_EUROS;
-      } else if (srcCol === PRIX_SRC && dayEuroCols.length) {
+      } else if (label === "Total brut (en €)" && dayEuroColsExclNs.length) {
         outCell.value = {
-          formula: `SUM(${dayEuroCols.map((c) => `${c}${targetRow}`).join(",")})`,
+          formula: `SUM(${dayEuroColsExclNs.map((c) => `${c}${targetRow}`).join(",")})`,
         };
         outCell.numFmt = FMT_EUROS;
+      } else if (label === SHEET_NS_TOTAL_LABEL && dayNsEuroCols.length) {
+        outCell.value = {
+          formula: `SUM(${dayNsEuroCols.map((c) => `${c}${targetRow}`).join(",")})`,
+        };
+        outCell.numFmt = FMT_EUROS;
+      } else if (label === "TOTAL (en €)" && totalBrutCol) {
+        outCell.value = {
+          formula: nsTotalCol
+            ? `${totalBrutCol}${targetRow}+${nsTotalCol}${targetRow}`
+            : `${totalBrutCol}${targetRow}`,
+        };
+        outCell.numFmt = FMT_EUROS;
+      } else if (label === "Écart avec itsi (en €)" && totalCol && totalItsiCol) {
+        outCell.value = { formula: `${totalCol}${targetRow}-${totalItsiCol}${targetRow}` };
+        outCell.numFmt = FMT_EUROS_4DP;
       } else {
         writeValue(outCell, val, label, srcCol, tgtCol, srcRow, targetRow, dayColmap, new Map());
         if (!outCell.numFmt) outCell.numFmt = numFmtForDetailDayLabel(label);
       }
-      outCell.fill = SECTION_DATA_FILL[sectionForDetailDayLabel(label)];
+      outCell.fill = SECTION_DATA_FILL[fillSectionForDetailDayLabel(label)];
     }
     currentRow += 1;
   }
